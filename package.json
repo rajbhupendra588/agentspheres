@@ -1,0 +1,22 @@
+{
+  "name": "agentsphere",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AgentSphere — Enterprise AI Agent Service Mesh",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "dev": "pnpm -r --parallel run dev",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint --if-present",
+    "smoke": "bash scripts/e2e-smoke.sh",
+    "demo": "bash scripts/demo-invoke.sh"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@agentsphere/common",
+  "version": "0.1.0",
+  "description": "Shared utilities for AgentSphere services and agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json --watch"
+  },
+  "dependencies": {
+    "@agentsphere/contracts": "workspace:*",
+    "fastify": "^5.2.1",
+    "pg": "^8.13.1",
+    "ulid": "^2.3.0",
+    "zod": "^3.24.1"
+  },
+  "peerDependencies": {
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10"
+  }
+}

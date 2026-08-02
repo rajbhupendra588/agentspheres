@@ -1,0 +1,87 @@
+# Production overlay: fail-closed auth; bind internal ports to localhost only.
+# Usage:
+#   export AS_JWT_SECRET='...at-least-32-chars...'
+#   export AS_BOOTSTRAP_SECRET='...strong-secret...'
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+#
+name: agentsphere
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5433:5432"
+  redis:
+    ports:
+      - "127.0.0.1:6380:6379"
+  nats:
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+  auth:
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+      AS_JWT_SECRET: ${AS_JWT_SECRET:?AS_JWT_SECRET is required}
+      AS_BOOTSTRAP_SECRET: ${AS_BOOTSTRAP_SECRET:?AS_BOOTSTRAP_SECRET is required}
+  registry:
+    ports:
+      - "127.0.0.1:8082:8082"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  discovery:
+    ports:
+      - "127.0.0.1:8083:8083"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  runtime:
+    ports:
+      - "127.0.0.1:8084:8084"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  workflow:
+    ports:
+      - "127.0.0.1:8085:8085"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  tool-engine:
+    ports:
+      - "127.0.0.1:8086:8086"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  memory:
+    ports:
+      - "127.0.0.1:8087:8087"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  notification:
+    ports:
+      - "127.0.0.1:8088:8088"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  researcher:
+    ports:
+      - "127.0.0.1:9001:9001"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  synthesizer:
+    ports:
+      - "127.0.0.1:9002:9002"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+  gateway:
+    ports:
+      - "8080:8080"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+      AS_JWT_SECRET: ${AS_JWT_SECRET:?AS_JWT_SECRET is required}
+      AS_BOOTSTRAP_SECRET: ${AS_BOOTSTRAP_SECRET:?AS_BOOTSTRAP_SECRET is required}
+  console:
+    ports:
+      - "3000:3000"
+    environment:
+      AS_GATEWAY_OPEN: "false"
+      AS_JWT_SECRET: ${AS_JWT_SECRET:?AS_JWT_SECRET is required}
+      AS_BOOTSTRAP_SECRET: ${AS_BOOTSTRAP_SECRET:?AS_BOOTSTRAP_SECRET is required}
+      AS_GATEWAY_URL: http://gateway:8080
+      AS_CONSOLE_PUBLIC_GATEWAY: ""
