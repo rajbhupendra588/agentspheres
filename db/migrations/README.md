@@ -14,6 +14,7 @@ Applied by `@agentsphere/common` `runMigrations()` into `flyway_schema_history`.
 | 2 | `V2__event_outbox.sql` | Transactional outbox |
 | 3 | `V3__memory_records.sql` | Durable memory |
 | 4 | `V4__tool_registry.sql` | Independent tool registry |
+| 5 | `V5__toolsphere_platform.sql` | ToolSphere platform tables: configuration, permissions, executions, and audit |
 
 ## Runtime
 

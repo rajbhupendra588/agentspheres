@@ -1,0 +1,196 @@
+syntax = "proto3";
+
+package agentsphere.toolsphere.v1;
+
+option go_package = "github.com/agentsphere/agentsphere/gen/go/toolsphere/v1;toolspherev1";
+option java_multiple_files = true;
+option java_package = "io.agentsphere.toolsphere.v1";
+
+// ToolSphere is the service contract for the tenant-scoped tool registry and runtime.
+// REST through the Gateway is the primary public API today.
+service ToolSphere {
+  rpc Register(RegisterToolRequest) returns (RegisterToolResponse);
+  rpc Update(UpdateToolRequest) returns (ToolCard);
+  rpc Delete(DeleteToolRequest) returns (DeleteToolResponse);
+  rpc Get(GetToolRequest) returns (ToolCard);
+  rpc List(ListToolsRequest) returns (ListToolsResponse);
+  rpc Discover(DiscoverToolsRequest) returns (DiscoverToolsResponse);
+  rpc Execute(ExecuteToolRequest) returns (ExecuteToolResponse);
+  rpc Validate(ValidateToolRequest) returns (ValidateToolResponse);
+  rpc Health(ToolHealthRequest) returns (ToolHealthResponse);
+  rpc Metrics(ToolMetricsRequest) returns (ToolMetricsResponse);
+  rpc Configure(ConfigureToolRequest) returns (ConfigureToolResponse);
+}
+
+message JsonObject { string json = 1; }
+
+message ToolCapability {
+  string name = 1;
+  optional string description = 2;
+  JsonObject input_schema = 3;
+  JsonObject output_schema = 4;
+  repeated string permissions = 5;
+  repeated string execution_modes = 6;
+}
+
+message ToolAuthentication {
+  repeated string schemes = 1;
+  bool required = 2;
+  repeated string scopes = 3;
+  optional string audience = 4;
+}
+
+message ToolConfigurationSchema {
+  JsonObject schema = 1;
+  repeated string required = 2;
+  repeated string secrets = 3;
+  JsonObject defaults = 4;
+}
+
+message ToolDependency {
+  optional string tool_id = 1;
+  string name = 2;
+  optional string version_range = 3;
+  bool optional = 4;
+}
+
+message ToolRateLimit {
+  optional double requests_per_second = 1;
+  optional double requests_per_minute = 2;
+  optional double requests_per_day = 3;
+  optional int32 concurrent_executions = 4;
+  optional int32 burst = 5;
+}
+
+message ToolCost {
+  string currency = 1;
+  optional double per_execution = 2;
+  optional double per_unit = 3;
+  optional string unit = 4;
+}
+
+message ToolHealth {
+  string status = 1;
+  string checked_at = 2;
+  optional double latency_ms = 3;
+  optional string message = 4;
+  JsonObject details = 5;
+}
+
+message ToolMetricsSnapshot {
+  int64 executions_total = 1;
+  int64 executions_success = 2;
+  int64 executions_failed = 3;
+  int64 executions_cancelled = 4;
+  optional double avg_latency_ms = 5;
+  optional double p95_latency_ms = 6;
+  optional double p99_latency_ms = 7;
+  optional double error_rate = 8;
+  optional string last_executed_at = 9;
+  optional string window_start = 10;
+  optional string window_end = 11;
+}
+
+// Published discovery document. Enum-valued fields use the contract strings
+// defined by packages/contracts/src/tools.ts to preserve forward compatibility.
+message ToolCard {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string version = 4;
+  string owner = 5;
+  string category = 6;
+  repeated ToolCapability capabilities = 7;
+  ToolAuthentication authentication = 8;
+  repeated string permissions = 9;
+  ToolConfigurationSchema configuration = 10;
+  repeated string supported_protocols = 11;
+  repeated string supported_tenants = 12;
+  repeated ToolDependency dependencies = 13;
+  ToolMetricsSnapshot metrics = 14;
+  ToolHealth health = 15;
+  ToolRateLimit rate_limits = 16;
+  ToolCost cost = 17;
+  optional string documentation = 18;
+  repeated string tags = 19;
+  repeated string regions = 20;
+  string lifecycle = 21;
+  bool builtin = 22;
+  optional string endpoint = 23;
+  JsonObject input_schema = 24;
+  JsonObject output_schema = 25;
+  string tenant_id = 26;
+  optional string project_id = 27;
+  optional int64 row_version = 28;
+  optional string created_at = 29;
+  optional string updated_at = 30;
+}
+
+message ToolDefinition { ToolCard tool = 1; }
+message RegisterToolRequest { ToolDefinition definition = 1; }
+message RegisterToolResponse { ToolCard tool = 1; string status = 2; int64 row_version = 3; }
+message UpdateToolRequest { string id = 1; ToolDefinition definition = 2; optional int64 expected_row_version = 3; }
+message DeleteToolRequest { string id = 1; string tenant_id = 2; }
+message DeleteToolResponse { bool ok = 1; ToolCard tool = 2; }
+message GetToolRequest { string id = 1; string tenant_id = 2; optional string version = 3; }
+message ListToolsRequest { string tenant_id = 1; bool include_deprecated = 2; }
+message ListToolsResponse { repeated ToolCard tools = 1; int32 count = 2; string tenant_id = 3; }
+
+message DiscoverToolsRequest {
+  string tenant_id = 1;
+  optional string capability = 2;
+  optional string category = 3;
+  repeated string tags = 4;
+  optional string region = 5;
+  optional string owner = 6;
+  optional string version = 7;
+  optional string health = 8;
+  repeated string permissions = 9;
+  optional int32 max_latency_ms = 10;
+  bool include_deprecated = 11;
+  int32 limit = 12;
+  int32 offset = 13;
+}
+message DiscoverToolsResponse { repeated ToolCard tools = 1; int32 count = 2; int32 total = 3; string tenant_id = 4; string resolved_at = 5; }
+
+message ExecuteToolRequest {
+  string tool = 1;
+  JsonObject input = 2;
+  optional string agent_name = 3;
+  optional string correlation_id = 4;
+  optional string tenant_id = 5;
+  optional string project_id = 6;
+  optional string version = 7;
+  optional string capability = 8;
+  optional string mode = 9;
+  optional int32 timeout_ms = 10;
+  optional string idempotency_key = 11;
+  optional string scheduled_at = 12;
+  optional string cancel_token = 13;
+  JsonObject configuration = 14;
+}
+message ExecuteToolResponse {
+  string execution_id = 1;
+  JsonObject output = 2;
+  string tool = 3;
+  optional string version = 4;
+  optional string capability = 5;
+  string status = 6;
+  double latency_ms = 7;
+  optional string correlation_id = 8;
+  optional string tenant_id = 9;
+  optional int32 attempts = 10;
+  optional string stream_url = 11;
+}
+
+message ValidateToolRequest { optional ToolDefinition tool = 1; optional string tool_id = 2; optional string name = 3; optional string version = 4; JsonObject input = 5; JsonObject configuration = 6; }
+message ValidationIssue { string path = 1; string code = 2; string message = 3; }
+message ValidateToolResponse { bool valid = 1; repeated ValidationIssue errors = 2; repeated ValidationIssue warnings = 3; }
+message ToolHealthRequest { string tenant_id = 1; }
+message ToolHealthEntry { string id = 1; string name = 2; string version = 3; ToolHealth health = 4; }
+message ToolHealthResponse { repeated ToolHealthEntry tools = 1; string tenant_id = 2; string checked_at = 3; }
+message ToolMetricsRequest { string tenant_id = 1; }
+message ToolMetricsEntry { string id = 1; string name = 2; string version = 3; ToolMetricsSnapshot metrics = 4; }
+message ToolMetricsResponse { repeated ToolMetricsEntry tools = 1; string tenant_id = 2; optional string window_start = 3; optional string window_end = 4; }
+message ConfigureToolRequest { string id = 1; string tenant_id = 2; JsonObject values = 3; map<string, string> secrets = 4; }
+message ConfigureToolResponse { string tool_id = 1; JsonObject values = 2; repeated string secret_keys = 3; int64 row_version = 4; }

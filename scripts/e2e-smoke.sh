@@ -25,6 +25,19 @@ for i in $(seq 1 30); do
   fi
 done
 
+echo "==> ToolSphere list tools"
+curl -fsS "$GATEWAY/mesh/tools/v1/tools" | tee /tmp/as-tools.json >/dev/null
+
+echo "==> ToolSphere discover (capability mesh.tracing)"
+curl -fsS "$GATEWAY/mesh/tools/v1/tools/discover?capability=mesh.tracing" | tee /tmp/as-tool-discover.json >/dev/null
+
+echo "==> ToolSphere execute mesh.tracing"
+curl -fsS -X POST "$GATEWAY/mesh/tools/v1/execute" \
+  -H 'content-type: application/json' \
+  -H 'x-tenant-id: default' \
+  -d '{"tool":"mesh.tracing","input":{}}' \
+  | tee /tmp/as-tool-execute.json >/dev/null
+
 echo "==> Discover research.web"
 curl -fsS "$GATEWAY/mesh/discovery/v1/discover?capability=research.web" | tee /tmp/as-discover.json >/dev/null
 

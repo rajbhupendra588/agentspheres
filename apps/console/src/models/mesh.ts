@@ -6,12 +6,40 @@ import type {
   InvokeResponse,
   MemoryRecord,
   MemoryScope,
+  ToolCard,
+  ToolConfigurationUpsert,
+  ToolDiscoverQuery,
+  ToolDiscoverResponse,
+  ToolHealthListResponse,
+  ToolMetricsListResponse,
+  ToolPermissionGrant,
+  ToolUpdateRequest,
+  ToolValidateRequest,
+  ToolValidateResponse,
   ToolDefinition,
   ToolExecuteRequest,
   ToolExecuteResponse,
 } from "@agentsphere/contracts";
 
-export type { ApiErrorBody, DiscoveryQuery, DiscoveryResult, InvokeRequest, InvokeResponse, MemoryRecord, ToolDefinition };
+export type {
+  ApiErrorBody,
+  DiscoveryQuery,
+  DiscoveryResult,
+  InvokeRequest,
+  InvokeResponse,
+  MemoryRecord,
+  ToolCard,
+  ToolConfigurationUpsert,
+  ToolDiscoverQuery,
+  ToolDiscoverResponse,
+  ToolHealthListResponse,
+  ToolMetricsListResponse,
+  ToolPermissionGrant,
+  ToolUpdateRequest,
+  ToolValidateRequest,
+  ToolValidateResponse,
+  ToolDefinition,
+};
 
 export type MeshAggregateStatus = "ok" | "degraded";
 
@@ -64,13 +92,75 @@ export interface CapabilitiesResponse {
 }
 
 export interface ToolsListResponse {
-  tools: ToolDefinition[];
+  tools: ToolCard[];
   count: number;
+  tenantId?: string;
 }
 
 export interface RegisterToolResponse {
-  tool: ToolDefinition;
-  status: "REGISTERED";
+  tool: ToolCard;
+  status: "REGISTERED" | "UPDATED";
+  rowVersion?: number;
+}
+
+export interface ToolResponse {
+  tool: ToolCard;
+}
+
+export interface ToolDeleteResponse {
+  ok: boolean;
+  tool: ToolCard;
+}
+
+export interface ToolExecutionRecord {
+  id: string;
+  tool: string;
+  version?: string;
+  status: "SUCCEEDED" | "FAILED" | "CANCELLED" | "ACCEPTED" | "RUNNING";
+  latencyMs?: number;
+  correlationId?: string;
+  startedAt: string;
+  finishedAt?: string;
+  attempts?: number;
+}
+
+export interface ToolExecutionsResponse {
+  executions: ToolExecutionRecord[];
+  count: number;
+  tenantId: string;
+  concurrency?: unknown;
+}
+
+export interface ToolAuditRecord {
+  id: string;
+  tenantId: string;
+  toolId: string;
+  toolName: string;
+  action: string;
+  actor?: string;
+  correlationId?: string;
+  executionId?: string;
+  result?: "SUCCESS" | "FAILURE" | "DENIED";
+  details?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ToolAuditResponse {
+  records: ToolAuditRecord[];
+  count: number;
+  tenantId: string;
+}
+
+export interface ToolPermissionsResponse {
+  toolId: string;
+  permissions: ToolPermissionGrant[];
+}
+
+export interface ToolConfigurationResponse {
+  toolId: string;
+  values: Record<string, unknown>;
+  secretKeys: string[];
+  rowVersion: number;
 }
 
 export interface MemoryGetResponse {

@@ -56,6 +56,12 @@ const ToolsPage = lazy(() =>
 const ToolDetailsPage = lazy(() =>
   import("@/pages/tools/tool-details-page").then((m) => ({ default: m.ToolDetailsPage })),
 );
+const ToolsHealthPage = lazy(() =>
+  import("@/pages/tools/tools-health-page").then((m) => ({ default: m.ToolsHealthPage })),
+);
+const ToolsMetricsPage = lazy(() =>
+  import("@/pages/tools/tools-metrics-page").then((m) => ({ default: m.ToolsMetricsPage })),
+);
 const MemoryPage = lazy(() =>
   import("@/pages/memory/memory-page").then((m) => ({ default: m.MemoryPage })),
 );
@@ -138,6 +144,8 @@ export function AppRouter() {
           <Route path="workflows/builder" element={<WorkflowBuilderPage />} />
           <Route path="logs" element={<ExecutionLogsPage />} />
           <Route path="tools" element={<ToolsPage />} />
+          <Route path="tools/health" element={<ToolsHealthPage />} />
+          <Route path="tools/metrics" element={<ToolsMetricsPage />} />
           <Route path="tools/:toolName" element={<ToolDetailsPage />} />
           <Route path="memory" element={<MemoryPage />} />
           <Route path="events" element={<EventBusPage />} />

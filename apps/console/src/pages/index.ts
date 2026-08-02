@@ -21,6 +21,8 @@ export { ExecutionLogsPage } from "./logs/execution-logs-page";
 
 export { ToolsPage } from "./tools/tools-page";
 export { ToolDetailsPage } from "./tools/tool-details-page";
+export { ToolsHealthPage } from "./tools/tools-health-page";
+export { ToolsMetricsPage } from "./tools/tools-metrics-page";
 
 export { MemoryPage } from "./memory/memory-page";
 

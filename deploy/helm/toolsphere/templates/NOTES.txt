@@ -1,0 +1,9 @@
+ToolSphere has been installed.
+
+The runtime is available inside the cluster at:
+  http://{{ include "toolsphere.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Verify readiness:
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl port-forward -n {{ .Release.Namespace }} service/{{ include "toolsphere.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl http://127.0.0.1:{{ .Values.service.port }}/readyz

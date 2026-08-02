@@ -104,8 +104,20 @@ export const NAV_SECTIONS: NavSection[] = [
       {
         label: "Tools",
         href: "/tools",
-        description: "Tool registry and execution",
-        keywords: ["tools", "mcp"],
+        description: "Tool marketplace, governance, and execution",
+        keywords: ["tools", "mcp", "marketplace"],
+      },
+      {
+        label: "Tool Health",
+        href: "/tools/health",
+        description: "Tool health checks",
+        keywords: ["tools", "health", "status"],
+      },
+      {
+        label: "Tool Metrics",
+        href: "/tools/metrics",
+        description: "Tool execution metrics",
+        keywords: ["tools", "metrics", "latency"],
       },
       {
         label: "Memory",

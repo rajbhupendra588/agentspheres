@@ -23,6 +23,14 @@ export const MeshEventTypeSchema = z.enum([
   "com.agentsphere.agent.offline",
   "com.agentsphere.agent.deregistered",
   "com.agentsphere.tool.registered",
+  "com.agentsphere.tool.updated",
+  "com.agentsphere.tool.deleted",
+  "com.agentsphere.tool.executed",
+  "com.agentsphere.tool.failed",
+  "com.agentsphere.tool.healthy",
+  "com.agentsphere.tool.unhealthy",
+  "com.agentsphere.tool.deprecated",
+  "com.agentsphere.tool.configured",
   "com.agentsphere.task.started",
   "com.agentsphere.task.completed",
   "com.agentsphere.task.failed",
@@ -44,6 +52,14 @@ export const subjects = {
   agentOffline: "agentsphere.agent.offline",
   agentDeregistered: "agentsphere.agent.deregistered",
   toolRegistered: "agentsphere.tool.registered",
+  toolUpdated: "agentsphere.tool.updated",
+  toolDeleted: "agentsphere.tool.deleted",
+  toolExecuted: "agentsphere.tool.executed",
+  toolFailed: "agentsphere.tool.failed",
+  toolHealthy: "agentsphere.tool.healthy",
+  toolUnhealthy: "agentsphere.tool.unhealthy",
+  toolDeprecated: "agentsphere.tool.deprecated",
+  toolConfigured: "agentsphere.tool.configured",
   taskStarted: "agentsphere.task.started",
   taskCompleted: "agentsphere.task.completed",
   taskFailed: "agentsphere.task.failed",
@@ -65,6 +81,14 @@ export const EVENT_TYPE_TO_SUBJECT: Record<MeshEventType, EventSubject> = {
   "com.agentsphere.agent.offline": subjects.agentOffline,
   "com.agentsphere.agent.deregistered": subjects.agentDeregistered,
   "com.agentsphere.tool.registered": subjects.toolRegistered,
+  "com.agentsphere.tool.updated": subjects.toolUpdated,
+  "com.agentsphere.tool.deleted": subjects.toolDeleted,
+  "com.agentsphere.tool.executed": subjects.toolExecuted,
+  "com.agentsphere.tool.failed": subjects.toolFailed,
+  "com.agentsphere.tool.healthy": subjects.toolHealthy,
+  "com.agentsphere.tool.unhealthy": subjects.toolUnhealthy,
+  "com.agentsphere.tool.deprecated": subjects.toolDeprecated,
+  "com.agentsphere.tool.configured": subjects.toolConfigured,
   "com.agentsphere.task.started": subjects.taskStarted,
   "com.agentsphere.task.completed": subjects.taskCompleted,
   "com.agentsphere.task.failed": subjects.taskFailed,
@@ -167,15 +191,85 @@ export const AgentDeregisteredDataSchema = z.object({
 export type AgentDeregisteredData = z.infer<typeof AgentDeregisteredDataSchema>;
 
 export const ToolRegisteredDataSchema = z.object({
+  toolId: z.string().min(1).optional(),
   tool: z.string().min(1),
   version: z.string().optional(),
   description: z.string().optional(),
+  category: z.string().optional(),
   tags: z.array(z.string()).optional(),
   registeredAt: z.string().datetime(),
 });
 
 export type ToolRegisteredData = z.infer<typeof ToolRegisteredDataSchema>;
 
+export const ToolUpdatedDataSchema = z.object({
+  toolId: z.string().min(1),
+  tool: z.string().min(1),
+  version: z.string().min(1),
+  rowVersion: z.number().int().positive(),
+  updatedAt: z.string().datetime(),
+});
+export type ToolUpdatedData = z.infer<typeof ToolUpdatedDataSchema>;
+
+export const ToolDeletedDataSchema = z.object({
+  toolId: z.string().min(1),
+  tool: z.string().min(1),
+  version: z.string().min(1),
+  deletedAt: z.string().datetime(),
+});
+export type ToolDeletedData = z.infer<typeof ToolDeletedDataSchema>;
+
+export const ToolExecutedDataSchema = z.object({
+  executionId: z.string().min(1),
+  toolId: z.string().min(1),
+  tool: z.string().min(1),
+  version: z.string().optional(),
+  capability: z.string().optional(),
+  latencyMs: z.number().nonnegative(),
+  agentName: z.string().optional(),
+  executedAt: z.string().datetime(),
+});
+export type ToolExecutedData = z.infer<typeof ToolExecutedDataSchema>;
+
+export const ToolFailedDataSchema = z.object({
+  executionId: z.string().min(1),
+  toolId: z.string().optional(),
+  tool: z.string().min(1),
+  version: z.string().optional(),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  latencyMs: z.number().nonnegative(),
+  attempts: z.number().int().positive().optional(),
+  failedAt: z.string().datetime(),
+});
+export type ToolFailedData = z.infer<typeof ToolFailedDataSchema>;
+
+export const ToolHealthChangedDataSchema = z.object({
+  toolId: z.string().min(1),
+  tool: z.string().min(1),
+  version: z.string().min(1),
+  status: z.enum(["HEALTHY", "DEGRADED", "UNHEALTHY", "UNKNOWN"]),
+  message: z.string().optional(),
+  checkedAt: z.string().datetime(),
+});
+export type ToolHealthChangedData = z.infer<typeof ToolHealthChangedDataSchema>;
+
+export const ToolDeprecatedDataSchema = z.object({
+  toolId: z.string().min(1),
+  tool: z.string().min(1),
+  version: z.string().min(1),
+  deprecatedAt: z.string().datetime(),
+});
+export type ToolDeprecatedData = z.infer<typeof ToolDeprecatedDataSchema>;
+
+export const ToolConfiguredDataSchema = z.object({
+  toolId: z.string().min(1),
+  tool: z.string().min(1),
+  version: z.string().min(1),
+  configuredAt: z.string().datetime(),
+  keys: z.array(z.string()).optional(),
+});
+export type ToolConfiguredData = z.infer<typeof ToolConfiguredDataSchema>;
 export const TaskStartedDataSchema = z.object({
   taskId: z.string().min(1),
   capability: z.string().min(1),

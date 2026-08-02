@@ -1,5 +1,5 @@
 import type { DiscoveryQuery, InvokeRequest, MemorySetRequest, ToolExecuteRequest } from "@agentsphere/contracts";
-import { get, post, put, resolveAbsoluteGatewayUrl } from "@/api/client";
+import { del, get, post, put, resolveAbsoluteGatewayUrl } from "@/api/client";
 import type { AgentInstance, AgentsListResponse } from "@/models/agent";
 import type {
   CapabilitiesResponse,
@@ -25,10 +25,25 @@ import type {
   TokenRequest,
   TokenResponse,
   ToolDefinition,
+  ToolConfigurationResponse,
+  ToolDeleteResponse,
+  ToolExecutionsResponse,
+  ToolAuditResponse,
+  ToolPermissionsResponse,
+  ToolResponse,
   ToolExecuteResponse,
   WorkflowRun,
   WorkflowsListResponse,
   ToolsListResponse,
+  ToolConfigurationUpsert,
+  ToolDiscoverQuery,
+  ToolDiscoverResponse,
+  ToolHealthListResponse,
+  ToolMetricsListResponse,
+  ToolPermissionGrant,
+  ToolUpdateRequest,
+  ToolValidateRequest,
+  ToolValidateResponse,
 } from "@/models/mesh";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -134,11 +149,107 @@ export function listTools(signal?: AbortSignal): Promise<ToolsListResponse> {
   return get<ToolsListResponse>("/mesh/tools/v1/tools", { signal });
 }
 
+export function discoverTools(
+  query: ToolDiscoverQuery,
+  signal?: AbortSignal,
+): Promise<ToolDiscoverResponse> {
+  const params: Record<string, string | number | boolean> = {};
+
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined) continue;
+    params[key] = Array.isArray(value) ? value.join(",") : value;
+  }
+
+  return get<ToolDiscoverResponse>("/mesh/tools/v1/tools/discover", { signal, params });
+}
+
+export function getTool(id: string, signal?: AbortSignal): Promise<ToolResponse> {
+  return get<ToolResponse>(`/mesh/tools/v1/tools/${encodeURIComponent(id)}`, { signal });
+}
+
 export function registerTool(
   definition: ToolDefinition,
   signal?: AbortSignal,
 ): Promise<RegisterToolResponse> {
   return post<RegisterToolResponse>("/mesh/tools/v1/tools", definition, { signal });
+}
+
+export function updateTool(
+  id: string,
+  body: ToolUpdateRequest,
+  signal?: AbortSignal,
+): Promise<RegisterToolResponse> {
+  return put<RegisterToolResponse>(`/mesh/tools/v1/tools/${encodeURIComponent(id)}`, body, { signal });
+}
+
+export function deleteTool(id: string, signal?: AbortSignal): Promise<ToolDeleteResponse> {
+  return del<ToolDeleteResponse>(`/mesh/tools/v1/tools/${encodeURIComponent(id)}`, { signal });
+}
+
+export function validateTool(
+  body: ToolValidateRequest,
+  signal?: AbortSignal,
+): Promise<ToolValidateResponse> {
+  return post<ToolValidateResponse>("/mesh/tools/v1/tools/validate", body, { signal });
+}
+
+export function getToolsHealth(signal?: AbortSignal): Promise<ToolHealthListResponse> {
+  return get<ToolHealthListResponse>("/mesh/tools/v1/tools/health", { signal });
+}
+
+export function getToolsMetrics(signal?: AbortSignal): Promise<ToolMetricsListResponse> {
+  return get<ToolMetricsListResponse>("/mesh/tools/v1/tools/metrics", { signal });
+}
+
+export function getToolExecutions(
+  tool?: string,
+  signal?: AbortSignal,
+): Promise<ToolExecutionsResponse> {
+  return get<ToolExecutionsResponse>("/mesh/tools/v1/tools/executions", {
+    signal,
+    params: tool ? { tool } : undefined,
+  });
+}
+
+export function getToolAudit(toolId?: string, signal?: AbortSignal): Promise<ToolAuditResponse> {
+  return get<ToolAuditResponse>("/mesh/tools/v1/tools/audit", {
+    signal,
+    params: toolId ? { toolId } : undefined,
+  });
+}
+
+export function upsertToolConfiguration(
+  id: string,
+  body: ToolConfigurationUpsert,
+  signal?: AbortSignal,
+): Promise<ToolConfigurationResponse> {
+  return put<ToolConfigurationResponse>(
+    `/mesh/tools/v1/tools/${encodeURIComponent(id)}/configuration`,
+    body,
+    { signal },
+  );
+}
+
+export function grantToolPermission(
+  id: string,
+  body: ToolPermissionGrant,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; toolId: string; grant: ToolPermissionGrant }> {
+  return post<{ ok: boolean; toolId: string; grant: ToolPermissionGrant }>(
+    `/mesh/tools/v1/tools/${encodeURIComponent(id)}/permissions`,
+    body,
+    { signal },
+  );
+}
+
+export function listToolPermissions(
+  id: string,
+  signal?: AbortSignal,
+): Promise<ToolPermissionsResponse> {
+  return get<ToolPermissionsResponse>(
+    `/mesh/tools/v1/tools/${encodeURIComponent(id)}/permissions`,
+    { signal },
+  );
 }
 
 export function executeTool(

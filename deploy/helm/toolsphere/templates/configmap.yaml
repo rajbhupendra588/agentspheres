@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "toolsphere.fullname" . }}
+  labels:
+    {{- include "toolsphere.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.service.port | quote }}
+  {{- if not .Values.database.existingSecret }}
+  AS_DATABASE_URL: {{ required "database.url is required when database.existingSecret is unset" .Values.database.url | quote }}
+  {{- end }}
+  {{- if not .Values.nats.existingSecret }}
+  AS_NATS_URL: {{ .Values.nats.url | quote }}
+  {{- end }}
+  AS_TOOL_DEFAULT_TIMEOUT_MS: {{ .Values.tool.defaultTimeoutMs | quote }}
+  AS_TOOL_MAX_CONCURRENT: {{ .Values.tool.maxConcurrent | quote }}
+  AS_TOOL_MAX_CONCURRENT_PER_TOOL: {{ .Values.tool.maxConcurrentPerTool | quote }}
+  AS_TOOL_MAX_CONCURRENT_PER_TENANT: {{ .Values.tool.maxConcurrentPerTenant | quote }}
+  AS_TOOL_CB_FAILURES: {{ .Values.tool.circuitBreakerFailures | quote }}
+  AS_TOOL_CB_RESET_MS: {{ .Values.tool.circuitBreakerResetMs | quote }}
+  AS_TOOL_METRICS_WINDOW_MS: {{ .Values.tool.metricsWindowMs | quote }}
+  AS_TOOL_HEALTH_INTERVAL_MS: {{ .Values.tool.healthIntervalMs | quote }}

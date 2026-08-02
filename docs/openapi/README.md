@@ -5,11 +5,13 @@ Canonical client contract for applications calling the AgentSphere Gateway.
 | Artifact | Path |
 | --- | --- |
 | Spec (served by Gateway) | [`services/gateway/openapi/openapi.yaml`](../../services/gateway/openapi/openapi.yaml) |
-| Docs mirror | [`agentsphere-gateway.openapi.yaml`](./agentsphere-gateway.openapi.yaml) |
+| Documentation snapshot | [`agentsphere-gateway.openapi.yaml`](./agentsphere-gateway.openapi.yaml) |
 | Live YAML | `GET http://localhost:8080/openapi.yaml` |
 | Live discovery JSON | `GET http://localhost:8080/openapi.json` |
 
 ## Generate a client
+
+`services/gateway/openapi/openapi.yaml` is canonical. The documentation snapshot is retained for compatibility and may lag; generate clients and validate changes against the canonical Gateway contract.
 
 ```bash
 # Example: openapi-generator

@@ -1,0 +1,30 @@
+{
+  "name": "@agentsphere/tool-sdk",
+  "version": "0.1.0",
+  "description": "ToolSphere Tool SDK — contracts, decorators, and runtime helpers for enterprise tools",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --import tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@agentsphere/common": "workspace:*",
+    "@agentsphere/contracts": "workspace:*",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2"
+  }
+}

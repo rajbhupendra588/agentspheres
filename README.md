@@ -48,7 +48,7 @@ flowchart LR
   GW --> DISC[Discovery]
   GW --> RT[Runtime]
   GW --> WF[Workflow]
-  GW --> TOOL[Tool Engine]
+  GW --> TOOL[ToolSphere]
   GW --> MEM[Memory]
   RT --> DISC
   RT --> A1[researcher]
@@ -66,11 +66,15 @@ flowchart LR
 | --- | --- |
 | Edge | Gateway (`/mesh/*`) |
 | Control plane | Auth, Registry, Discovery |
-| Data plane | Runtime (A2A), Tool Engine, Memory, Notification |
+| Data plane | Runtime (A2A), ToolSphere (`tool-engine`), Memory, Notification |
 | Orchestration | Workflow (`research-synthesize`) |
 | Agents | SDK sidecars: register, heartbeat, `/v1/invoke` |
 
 Full design: [AgentSphere_E2E_Blueprint.md](./AgentSphere_E2E_Blueprint.md)
+
+### ToolSphere
+
+ToolSphere is the governed tool registry and execution runtime behind Gateway paths at `/mesh/tools/v1`. Tool authors use [`packages/tool-sdk`](./packages/tool-sdk); operators deploy the `tool-engine` runtime with [`deploy/helm/toolsphere`](./deploy/helm/toolsphere). The reserved gRPC contract is in [`protos/toolsphere`](./protos/toolsphere), while REST remains the primary public API. See [ToolSphere architecture](./docs/architecture/toolsphere.md).
 
 ## Monorepo
 
@@ -78,6 +82,7 @@ Full design: [AgentSphere_E2E_Blueprint.md](./AgentSphere_E2E_Blueprint.md)
 packages/contracts   Shared Zod contracts, CloudEvents catalog, ports
 packages/common      Logger, pg, http, health, JetStream event bus + outbox
 packages/sdk         createAgent() mesh sidecar
+packages/tool-sdk    Tool definitions, handlers, validation, and runtime errors
 services/*           Mesh microservices
 agents/*             Sample researcher + synthesizer
 apps/console         Operator UI

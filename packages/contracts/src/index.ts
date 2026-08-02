@@ -42,6 +42,13 @@ export {
   AgentOfflineDataSchema,
   AgentDeregisteredDataSchema,
   ToolRegisteredDataSchema,
+  ToolUpdatedDataSchema,
+  ToolDeletedDataSchema,
+  ToolExecutedDataSchema,
+  ToolFailedDataSchema,
+  ToolHealthChangedDataSchema,
+  ToolDeprecatedDataSchema,
+  ToolConfiguredDataSchema,
   TaskStartedDataSchema,
   TaskCompletedDataSchema,
   TaskFailedDataSchema,
@@ -61,6 +68,13 @@ export {
   type AgentOfflineData,
   type AgentDeregisteredData,
   type ToolRegisteredData,
+  type ToolUpdatedData,
+  type ToolDeletedData,
+  type ToolExecutedData,
+  type ToolFailedData,
+  type ToolHealthChangedData,
+  type ToolDeprecatedData,
+  type ToolConfiguredData,
   type TaskStartedData,
   type TaskCompletedData,
   type TaskFailedData,
@@ -69,7 +83,6 @@ export {
   type WorkflowCompletedData,
   type CreateMeshEventInput,
 } from "./events.js";
-
 import { TenantIdSchema, ProjectIdSchema } from "./tenancy.js";
 
 // ---------------------------------------------------------------------------
@@ -216,46 +229,81 @@ export const InvokeResponseSchema = z.object({
 export type InvokeResponse = z.infer<typeof InvokeResponseSchema>;
 
 // ---------------------------------------------------------------------------
-// Tools
+// Tools / ToolSphere
 // ---------------------------------------------------------------------------
 
-export const ToolStatusSchema = z.enum(["ACTIVE", "DEPRECATED"]);
-export type ToolStatus = z.infer<typeof ToolStatusSchema>;
-
-export const ToolDefinitionSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  version: z.string().min(1).optional(),
-  inputSchema: z.record(z.unknown()),
-  outputSchema: z.record(z.unknown()).optional(),
-  tags: z.array(z.string()).optional(),
-  /** Owning tenant; when omitted, resolved from x-tenant-id. */
-  tenantId: TenantIdSchema.optional(),
-  status: ToolStatusSchema.optional(),
-  builtin: z.boolean().optional(),
-});
-
-export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
-
-export const ToolExecuteRequestSchema = z.object({
-  tool: z.string().min(1),
-  input: z.unknown(),
-  agentName: z.string().optional(),
-  correlationId: z.string().optional(),
-  tenantId: TenantIdSchema.optional(),
-  version: z.string().optional(),
-});
-
-export type ToolExecuteRequest = z.infer<typeof ToolExecuteRequestSchema>;
-
-export const ToolExecuteResponseSchema = z.object({
-  output: z.unknown(),
-  tool: z.string(),
-  latencyMs: z.number().nonnegative(),
-});
-
-export type ToolExecuteResponse = z.infer<typeof ToolExecuteResponseSchema>;
-
+export {
+  ToolCategorySchema,
+  ToolLifecycleStateSchema,
+  ToolStatusSchema,
+  ToolAuthSchemeSchema,
+  ToolExecutionModeSchema,
+  ToolProtocolSchema,
+  ToolHealthStatusSchema,
+  ToolPermissionEffectSchema,
+  ToolCapabilitySchema,
+  ToolVersionInfoSchema,
+  ToolRateLimitSchema,
+  ToolCostSchema,
+  ToolAuthenticationSchema,
+  ToolConfigurationSchemaSchema,
+  ToolDependencySchema,
+  ToolHealthSchema,
+  ToolMetricsSnapshotSchema,
+  ToolCardSchema,
+  ToolDefinitionSchema,
+  ToolRegisterRequestSchema,
+  ToolRegisterResponseSchema,
+  ToolUpdateRequestSchema,
+  ToolDiscoverQuerySchema,
+  ToolDiscoverResponseSchema,
+  ToolValidateRequestSchema,
+  ToolValidateResponseSchema,
+  ToolExecuteRequestSchema,
+  ToolExecuteResponseSchema,
+  ToolCancelRequestSchema,
+  ToolConfigurationUpsertSchema,
+  ToolPermissionGrantSchema,
+  ToolAuditRecordSchema,
+  ToolHealthListResponseSchema,
+  ToolMetricsListResponseSchema,
+  ToolListResponseSchema,
+  type ToolCategory,
+  type ToolLifecycleState,
+  type ToolStatus,
+  type ToolAuthScheme,
+  type ToolExecutionMode,
+  type ToolProtocol,
+  type ToolHealthStatus,
+  type ToolPermissionEffect,
+  type ToolCapability,
+  type ToolVersionInfo,
+  type ToolRateLimit,
+  type ToolCost,
+  type ToolAuthentication,
+  type ToolConfigurationSchema,
+  type ToolDependency,
+  type ToolHealth,
+  type ToolMetricsSnapshot,
+  type ToolCard,
+  type ToolDefinition,
+  type ToolRegisterRequest,
+  type ToolRegisterResponse,
+  type ToolUpdateRequest,
+  type ToolDiscoverQuery,
+  type ToolDiscoverResponse,
+  type ToolValidateRequest,
+  type ToolValidateResponse,
+  type ToolExecuteRequest,
+  type ToolExecuteResponse,
+  type ToolCancelRequest,
+  type ToolConfigurationUpsert,
+  type ToolPermissionGrant,
+  type ToolAuditRecord,
+  type ToolHealthListResponse,
+  type ToolMetricsListResponse,
+  type ToolListResponse,
+} from "./tools.js";
 // ---------------------------------------------------------------------------
 // Memory
 // ---------------------------------------------------------------------------

@@ -74,7 +74,9 @@ List available tenants via `GET /mesh/registry/v1/tenants`.
 | `/discovery` | Discovery | `GET/POST /mesh/discovery/v1/discover` |
 | `/workflows` | Workflows | `GET /mesh/workflow/v1/workflows` |
 | `/workflows/builder` | Workflow builder | `POST …/research-synthesize` |
-| `/tools` | Tools | `GET/POST /mesh/tools/v1/tools` |
+| `/tools` | Tool marketplace | Discovery, registration, execution, configuration, permissions, and audit APIs |
+| `/tools/health` | Tool health | `GET /mesh/tools/v1/tools/health` |
+| `/tools/metrics` | Tool metrics | `GET /mesh/tools/v1/tools/metrics` |
 | `/memory` | Memory | Memory get/set/search APIs |
 | `/events` | Event bus | SSE + preferences store |
 | `/metrics` | Metrics | Computed from agents, health, workflows |

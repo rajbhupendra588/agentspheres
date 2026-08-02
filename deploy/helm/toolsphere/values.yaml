@@ -1,0 +1,66 @@
+replicaCount: 2
+
+image:
+  repository: agentsphere/tool-engine
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: [ALL]
+
+service:
+  type: ClusterIP
+  port: 8086
+
+database:
+  existingSecret: ""
+  secretKey: AS_DATABASE_URL
+  url: ""
+
+nats:
+  existingSecret: ""
+  secretKey: AS_NATS_URL
+  url: ""
+
+tool:
+  defaultTimeoutMs: 30000
+  maxConcurrent: 10000
+  maxConcurrentPerTool: 500
+  maxConcurrentPerTenant: 2000
+  circuitBreakerFailures: 20
+  circuitBreakerResetMs: 30000
+  metricsWindowMs: 60000
+  healthIntervalMs: 30000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

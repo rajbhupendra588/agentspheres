@@ -24,6 +24,19 @@ export const queryKeys = {
     all: ["tools"] as const,
     lists: () => [...queryKeys.tools.all, "list"] as const,
     list: (tenantId: string) => [...queryKeys.tools.lists(), tenantId] as const,
+    details: () => [...queryKeys.tools.all, "detail"] as const,
+    detail: (tenantId: string, id: string) =>
+      [...queryKeys.tools.details(), tenantId, id] as const,
+    discover: (tenantId: string, query: Record<string, unknown>) =>
+      [...queryKeys.tools.all, "discover", tenantId, query] as const,
+    health: (tenantId: string) => [...queryKeys.tools.all, "health", tenantId] as const,
+    metrics: (tenantId: string) => [...queryKeys.tools.all, "metrics", tenantId] as const,
+    executions: (tenantId: string, tool?: string) =>
+      [...queryKeys.tools.all, "executions", tenantId, tool ?? "all"] as const,
+    audit: (tenantId: string, toolId?: string) =>
+      [...queryKeys.tools.all, "audit", tenantId, toolId ?? "all"] as const,
+    permissions: (tenantId: string, toolId: string) =>
+      [...queryKeys.tools.all, "permissions", tenantId, toolId] as const,
   },
   workflows: {
     all: ["workflows"] as const,

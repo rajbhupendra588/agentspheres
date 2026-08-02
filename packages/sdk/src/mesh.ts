@@ -221,10 +221,12 @@ export function createMeshClient(
           input,
           agentName: opts.agentName ?? agentName,
           correlationId: opts.correlationId ?? ulid(),
+          tenantId: defaultTenantId,
+          projectId: defaultProjectId,
         });
 
         const url = `${resolveToolEngineBaseUrl()}/v1/execute`;
-        log.debug("mesh.tools.execute", { url, tool });
+        log.debug("mesh.tools.execute", { url, tool, tenantId: defaultTenantId });
 
         const result = await httpJson<ToolExecuteResponse>(url, {
           method: "POST",

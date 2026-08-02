@@ -45,6 +45,8 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
   "/workflows/builder": Hammer,
   "/logs": ScrollText,
   "/tools": Wrench,
+  "/tools/health": HeartPulse,
+  "/tools/metrics": BarChart3,
   "/memory": Activity,
   "/events": Radio,
   "/metrics": BarChart3,
