@@ -19,6 +19,7 @@ import {
   required,
   resolveProjectId,
   resolveTenantId,
+  runMigrations,
   toErrorBody,
   ulid,
 } from "@agentsphere/common";
@@ -36,30 +37,6 @@ const MemorySearchRequestSchema = z.object({
   workspaceId: z.string().optional(),
   limit: z.number().int().positive().optional(),
 });
-
-const INIT_SQL = `
-CREATE TABLE IF NOT EXISTS memory_records (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  project_id TEXT,
-  key TEXT NOT NULL,
-  value JSONB NOT NULL,
-  scope TEXT NOT NULL,
-  session_id TEXT,
-  agent_name TEXT,
-  workspace_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-`;
-
-const MIGRATION_SQL = `
-ALTER TABLE memory_records ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
-ALTER TABLE memory_records ADD COLUMN IF NOT EXISTS project_id TEXT;
-ALTER TABLE memory_records DROP CONSTRAINT IF EXISTS memory_records_scope_key_session_id_agent_name_workspace_id_key;
-CREATE UNIQUE INDEX IF NOT EXISTS memory_records_tenant_scope_key_idx
-  ON memory_records (tenant_id, scope, key, (COALESCE(session_id,'')), (COALESCE(agent_name,'')), (COALESCE(workspace_id,'')));
-`;
 
 const redis = new Redis(redisUrl, {
   maxRetriesPerRequest: 3,
@@ -431,8 +408,17 @@ app.post("/v1/memory/search", async (request, reply) => {
 });
 
 async function main(): Promise<void> {
-  await pool.query(INIT_SQL);
-  await pool.query(MIGRATION_SQL);
+  const migrations = await runMigrations({
+    pool,
+    logger: log,
+    installedBy: "memory",
+  });
+  log.info("database migrations ready", {
+    directory: migrations.directory,
+    applied: migrations.applied,
+    skipped: migrations.skipped.length,
+  });
+
   await redis.connect();
 
   await app.listen({ port, host: "0.0.0.0" });

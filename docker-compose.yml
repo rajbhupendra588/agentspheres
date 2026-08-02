@@ -8,6 +8,7 @@ x-service-env: &service-env
   AS_DATABASE_URL: postgres://agentsphere:agentsphere@postgres:5432/agentsphere
   AS_REDIS_URL: redis://redis:6379
   AS_NATS_URL: nats://nats:4222
+  AS_MIGRATIONS_DIR: /app/db/migrations
   AS_AUTH_URL: http://auth:8081
   AS_REGISTRY_URL: http://registry:8082
   AS_DISCOVERY_URL: http://discovery:8083
@@ -112,6 +113,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      nats:
+        condition: service_started
       registry:
         condition: service_healthy
     ports:
@@ -174,6 +177,11 @@ services:
     environment:
       <<: *service-env
       PORT: "8086"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
     ports:
       - "8086:8086"
     healthcheck:

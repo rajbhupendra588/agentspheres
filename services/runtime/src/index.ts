@@ -17,7 +17,16 @@ import {
   resolveTenantId,
   tenantHeaders,
   toErrorBody,
+  ulid,
 } from "@agentsphere/common";
+import {
+  closeRuntimeEvents,
+  initRuntimeEvents,
+  publishRoutingFailed,
+  publishTaskCompleted,
+  publishTaskFailed,
+  publishTaskStarted,
+} from "./events.js";
 
 const log = createLogger("runtime");
 const discoveryUrl = optional("AS_DISCOVERY_URL", "http://localhost:8083").replace(/\/$/, "");
@@ -30,16 +39,15 @@ app.register(healthRoutes);
 
 app.post("/v1/invoke", async (request, reply) => {
   const startedAt = Date.now();
+  const taskId = ulid();
 
   try {
     const body = InvokeRequestSchema.parse(request.body);
     const tenantId = resolveTenantId(request.headers, body.tenantId);
     const projectId = resolveProjectId(request.headers, body.projectId);
+    const correlationId = body.correlationId ?? taskId;
     const params = new URLSearchParams({ capability: body.capability, tenant: tenantId });
     if (projectId) params.set("projectId", projectId);
-    if (body.timeoutMs) {
-      // retained for agent hop; discovery ignores unknown
-    }
 
     const discovery = DiscoveryResultSchema.parse(
       await httpJson<DiscoveryResult>(
@@ -50,6 +58,14 @@ app.post("/v1/invoke", async (request, reply) => {
 
     const instance = discovery.instances[0];
     if (!instance) {
+      await publishRoutingFailed({
+        capability: body.capability,
+        tenantId,
+        projectId,
+        correlationId,
+        code: "CAPABILITY_UNAVAILABLE",
+        message: `No healthy instances for capability: ${body.capability}`,
+      });
       reply.status(404);
       return {
         error: {
@@ -58,6 +74,16 @@ app.post("/v1/invoke", async (request, reply) => {
         },
       };
     }
+
+    await publishTaskStarted({
+      taskId,
+      capability: body.capability,
+      tenantId,
+      projectId,
+      correlationId,
+      instanceId: instance.instanceId,
+      agentName: instance.agentName,
+    });
 
     const invokeUrl = `${instance.baseUrl.replace(/\/$/, "")}/v1/invoke`;
 
@@ -68,7 +94,7 @@ app.post("/v1/invoke", async (request, reply) => {
           capability: body.capability,
           input: body.input,
           timeoutMs: body.timeoutMs,
-          correlationId: body.correlationId,
+          correlationId,
           sessionId: body.sessionId,
         }),
       });
@@ -76,12 +102,29 @@ app.post("/v1/invoke", async (request, reply) => {
       const parsed = InvokeResponseSchema.parse(agentResponse);
       const latencyMs = Date.now() - startedAt;
 
+      await publishTaskCompleted({
+        taskId,
+        capability: body.capability,
+        tenantId,
+        projectId,
+        correlationId,
+        instanceId: instance.instanceId,
+        agentName: parsed.agentName || instance.agentName,
+        latencyMs: Math.max(parsed.latencyMs, latencyMs),
+      });
+
       return InvokeResponseSchema.parse({
         ...parsed,
         latencyMs: Math.max(parsed.latencyMs, latencyMs),
-        correlationId: parsed.correlationId ?? body.correlationId,
+        correlationId: parsed.correlationId ?? correlationId,
       });
     } catch (err) {
+      const latencyMs = Date.now() - startedAt;
+      const message =
+        err instanceof HttpError
+          ? err.message
+          : `Failed to invoke agent at ${invokeUrl}`;
+
       log.error("agent invoke failed", {
         capability: body.capability,
         instanceId: instance.instanceId,
@@ -89,14 +132,24 @@ app.post("/v1/invoke", async (request, reply) => {
         error: err instanceof Error ? err.message : String(err),
       });
 
+      await publishTaskFailed({
+        taskId,
+        capability: body.capability,
+        tenantId,
+        projectId,
+        correlationId,
+        instanceId: instance.instanceId,
+        agentName: instance.agentName,
+        code: "AGENT_INVOKE_FAILED",
+        message,
+        latencyMs,
+      });
+
       reply.status(502);
       return {
         error: {
           code: "AGENT_INVOKE_FAILED",
-          message:
-            err instanceof HttpError
-              ? err.message
-              : `Failed to invoke agent at ${invokeUrl}`,
+          message,
           details: err instanceof HttpError ? err.body : undefined,
         },
       };
@@ -137,6 +190,7 @@ app.get("/v1/capabilities", async (_request, reply) => {
 });
 
 async function main(): Promise<void> {
+  await initRuntimeEvents();
   await app.listen({ port, host: "0.0.0.0" });
   log.info("runtime listening", { port, discoveryUrl, registryUrl });
 }
@@ -147,3 +201,13 @@ main().catch((err) => {
   });
   process.exit(1);
 });
+
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+
+async function shutdown(signal: string): Promise<void> {
+  log.info("received shutdown signal", { signal });
+  await app.close();
+  await closeRuntimeEvents();
+  process.exit(0);
+}

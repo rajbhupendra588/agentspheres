@@ -80,7 +80,7 @@ List available tenants via `GET /mesh/registry/v1/tenants`.
 | `/metrics` | Metrics | Computed from agents, health, workflows |
 | `/tracing` | Tracing | Workflow step timestamps |
 | `/health` | Health | `GET /mesh/health` |
-| `/kafka` | Event Topics (NATS) | `@agentsphere/contracts` subjects + live events |
+| `/kafka` | Event Topics (JetStream) | `@agentsphere/contracts` subjects + live JetStream→SSE events |
 | `/security` | Security | Token issue/introspect |
 | `/users` | Users | Role model only (no user directory API) |
 | `/roles` | Roles | `can()` permission matrix |

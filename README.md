@@ -75,8 +75,8 @@ Full design: [AgentSphere_E2E_Blueprint.md](./AgentSphere_E2E_Blueprint.md)
 ## Monorepo
 
 ```
-packages/contracts   Shared Zod contracts, ports, NATS subjects
-packages/common      Logger, pg, http, health
+packages/contracts   Shared Zod contracts, CloudEvents catalog, ports
+packages/common      Logger, pg, http, health, JetStream event bus + outbox
 packages/sdk         createAgent() mesh sidecar
 services/*           Mesh microservices
 agents/*             Sample researcher + synthesizer
@@ -90,6 +90,14 @@ pnpm install
 pnpm build
 pnpm typecheck
 ```
+
+### Event bus (JetStream)
+
+Control-plane lifecycle events use **NATS JetStream** (not Kafka). Stream `AGENTSPHERE` captures `agentsphere.>` subjects with CloudEvents envelopes. Registry writes go through a transactional outbox; Notification bridges JetStream → console SSE. Discovery invalidates its Redis cache on agent registry events. See blueprint §23 for the full catalog (`AgentRegistered`, `AgentOffline`, `TaskStarted`/`Completed`/`Failed`, `RoutingFailed`, `WorkflowStarted`/`Completed`, `ToolRegistered`, …).
+
+### Database migrations
+
+Versioned SQL under [`db/migrations`](./db/migrations) (Flyway naming `V{n}__*.sql`, history table `flyway_schema_history`). Registry and Memory apply them at boot via `runMigrations()` (`AS_MIGRATIONS_DIR`, default `/app/db/migrations` in Compose).
 
 ### Multi-tenancy
 

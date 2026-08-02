@@ -17,11 +17,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dev": "tsc -p tsconfig.json --watch"
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@agentsphere/contracts": "workspace:*",
     "fastify": "^5.2.1",
+    "nats": "^2.29.1",
     "pg": "^8.13.1",
     "ulid": "^2.3.0",
     "zod": "^3.24.1"
@@ -30,6 +32,7 @@
     "fastify": "^5.0.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.10"
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2"
   }
 }

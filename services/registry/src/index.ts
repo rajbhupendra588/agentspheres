@@ -1,5 +1,4 @@
 import Fastify from "fastify";
-import { connect, type NatsConnection } from "nats";
 import {
   CreateTenantRequestSchema,
   DeregisterAgentRequestSchema,
@@ -11,48 +10,30 @@ import {
   TenantIdSchema,
   TenantMemberSchema,
   TenantRecordSchema,
-  subjects,
 } from "@agentsphere/contracts";
 import {
+  createEventBus,
   createLogger,
   createPgPool,
+  enqueueOutboxEvent,
   healthRoutes,
   optional,
   required,
   resolveProjectId,
   resolveTenantId,
+  startOutboxRelay,
   toErrorBody,
   ulid,
+  type EventBus,
 } from "@agentsphere/common";
 import { deleteExpired, initSchema, markStaleUnhealthy } from "./db.js";
 
 const log = createLogger("registry");
 const pool = createPgPool(required("AS_DATABASE_URL"));
+const SOURCE = "agentsphere/registry";
 
-let nats: NatsConnection | undefined;
-
-async function connectNats(): Promise<void> {
-  const url = optional("AS_NATS_URL", "");
-  if (!url) {
-    return;
-  }
-
-  try {
-    nats = await connect({ servers: url });
-    log.info("connected to NATS", { url });
-  } catch (err) {
-    log.warn("NATS connection failed; continuing without event publishing", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-function publish(subject: string, payload: unknown): void {
-  if (!nats) {
-    return;
-  }
-  nats.publish(subject, JSON.stringify(payload));
-}
+let bus: EventBus | undefined;
+let stopOutboxRelay: (() => void) | undefined;
 
 const app = Fastify({ logger: false });
 
@@ -121,61 +102,82 @@ app.post("/v1/register", async (request, reply) => {
     };
   }
 
-  await pool.query(
-    `
-    INSERT INTO agent_instances (
-      instance_id, agent_name, version, owner, tenant_id, project_id, base_url,
-      capabilities, labels, weight, status, card,
-      last_heartbeat, updated_at
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'HEALTHY', $11, NOW(), NOW())
-    ON CONFLICT (instance_id) DO UPDATE SET
-      agent_name = EXCLUDED.agent_name,
-      version = EXCLUDED.version,
-      owner = EXCLUDED.owner,
-      tenant_id = EXCLUDED.tenant_id,
-      project_id = EXCLUDED.project_id,
-      base_url = EXCLUDED.base_url,
-      capabilities = EXCLUDED.capabilities,
-      labels = EXCLUDED.labels,
-      weight = EXCLUDED.weight,
-      status = 'HEALTHY',
-      card = EXCLUDED.card,
-      last_heartbeat = NOW(),
-      updated_at = NOW()
-    `,
-    [
-      instanceId,
-      card.metadata.name,
-      card.metadata.version,
-      card.metadata.owner,
-      tenantId,
-      projectId ?? null,
-      baseUrl,
-      card.spec.capabilities,
-      JSON.stringify(labels),
-      weight ?? 100,
-      JSON.stringify(card),
-    ],
-  );
-
   const registeredAt = new Date().toISOString();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `
+      INSERT INTO agent_instances (
+        instance_id, agent_name, version, owner, tenant_id, project_id, base_url,
+        capabilities, labels, weight, status, card,
+        last_heartbeat, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'HEALTHY', $11, NOW(), NOW())
+      ON CONFLICT (instance_id) DO UPDATE SET
+        agent_name = EXCLUDED.agent_name,
+        version = EXCLUDED.version,
+        owner = EXCLUDED.owner,
+        tenant_id = EXCLUDED.tenant_id,
+        project_id = EXCLUDED.project_id,
+        base_url = EXCLUDED.base_url,
+        capabilities = EXCLUDED.capabilities,
+        labels = EXCLUDED.labels,
+        weight = EXCLUDED.weight,
+        status = 'HEALTHY',
+        card = EXCLUDED.card,
+        last_heartbeat = NOW(),
+        updated_at = NOW()
+      `,
+      [
+        instanceId,
+        card.metadata.name,
+        card.metadata.version,
+        card.metadata.owner,
+        tenantId,
+        projectId ?? null,
+        baseUrl,
+        card.spec.capabilities,
+        JSON.stringify(labels),
+        weight ?? 100,
+        JSON.stringify(card),
+      ],
+    );
+
+    await enqueueOutboxEvent(client, {
+      type: isUpdate
+        ? "com.agentsphere.agent.updated"
+        : "com.agentsphere.agent.registered",
+      source: SOURCE,
+      tenantId,
+      projectId: projectId ?? undefined,
+      agentId: instanceId,
+      data: {
+        instanceId,
+        agentName: card.metadata.name,
+        version: card.metadata.version,
+        baseUrl,
+        capabilities: card.spec.capabilities,
+        owner: card.metadata.owner,
+        projectId,
+        registeredAt,
+        ...(isUpdate ? { updatedAt: registeredAt } : {}),
+      },
+    });
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
   const response = RegisterAgentResponseSchema.parse({
     instanceId,
     agentName: card.metadata.name,
     version: card.metadata.version,
     status: isUpdate ? "UPDATED" : "REGISTERED",
-    registeredAt,
-  });
-
-  publish(subjects.agentRegistered, {
-    instanceId,
-    agentName: card.metadata.name,
-    version: card.metadata.version,
-    tenantId,
-    projectId,
-    baseUrl,
-    capabilities: card.spec.capabilities,
     registeredAt,
   });
 
@@ -188,62 +190,130 @@ app.post("/v1/heartbeat", async (request, reply) => {
   const timestamp = body.timestamp ? new Date(body.timestamp) : new Date();
   const status = body.status ?? "HEALTHY";
 
-  const result = await pool.query(
-    `
-    UPDATE agent_instances
-    SET last_heartbeat = $2, status = $3, updated_at = NOW()
-    WHERE instance_id = $1
-    RETURNING instance_id
-    `,
-    [body.instanceId, timestamp, status],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<{
+      instance_id: string;
+      agent_name: string;
+      tenant_id: string;
+      project_id: string | null;
+    }>(
+      `
+      UPDATE agent_instances
+      SET last_heartbeat = $2, status = $3, updated_at = NOW()
+      WHERE instance_id = $1
+      RETURNING instance_id, agent_name, tenant_id, project_id
+      `,
+      [body.instanceId, timestamp, status],
+    );
 
-  if (result.rowCount === 0) {
-    reply.status(404);
-    return {
-      error: {
-        code: "NOT_FOUND",
-        message: `Agent instance not found: ${body.instanceId}`,
+    if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
+      reply.status(404);
+      return {
+        error: {
+          code: "NOT_FOUND",
+          message: `Agent instance not found: ${body.instanceId}`,
+        },
+      };
+    }
+
+    const row = result.rows[0]!;
+    await enqueueOutboxEvent(client, {
+      type: "com.agentsphere.agent.heartbeat",
+      source: SOURCE,
+      tenantId: row.tenant_id,
+      projectId: row.project_id ?? undefined,
+      agentId: row.instance_id,
+      data: {
+        instanceId: row.instance_id,
+        agentName: row.agent_name,
+        timestamp: timestamp.toISOString(),
+        status,
       },
-    };
-  }
+    });
 
-  publish(subjects.agentHeartbeat, {
-    instanceId: body.instanceId,
-    timestamp: timestamp.toISOString(),
-    status,
-  });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return { ok: true };
 });
 
 app.post("/v1/deregister", async (request, reply) => {
   const body = DeregisterAgentRequestSchema.parse(request.body);
+  const deregisteredAt = new Date().toISOString();
 
-  const result = await pool.query(
-    "DELETE FROM agent_instances WHERE instance_id = $1 RETURNING agent_name, version",
-    [body.instanceId],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query<{
+      agent_name: string;
+      version: string;
+      tenant_id: string;
+      project_id: string | null;
+    }>(
+      `
+      DELETE FROM agent_instances
+      WHERE instance_id = $1
+      RETURNING agent_name, version, tenant_id, project_id
+      `,
+      [body.instanceId],
+    );
 
-  if (result.rowCount === 0) {
-    reply.status(404);
-    return {
-      error: {
-        code: "NOT_FOUND",
-        message: `Agent instance not found: ${body.instanceId}`,
+    if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
+      reply.status(404);
+      return {
+        error: {
+          code: "NOT_FOUND",
+          message: `Agent instance not found: ${body.instanceId}`,
+        },
+      };
+    }
+
+    const row = result.rows[0]!;
+    await enqueueOutboxEvent(client, {
+      type: "com.agentsphere.agent.deregistered",
+      source: SOURCE,
+      tenantId: row.tenant_id,
+      projectId: row.project_id ?? undefined,
+      agentId: body.instanceId,
+      data: {
+        instanceId: body.instanceId,
+        agentName: row.agent_name,
+        version: row.version,
+        reason: body.reason,
+        deregisteredAt,
       },
-    };
+    });
+    await enqueueOutboxEvent(client, {
+      type: "com.agentsphere.agent.offline",
+      source: SOURCE,
+      tenantId: row.tenant_id,
+      projectId: row.project_id ?? undefined,
+      agentId: body.instanceId,
+      data: {
+        instanceId: body.instanceId,
+        agentName: row.agent_name,
+        version: row.version,
+        reason: "DEREGISTERED",
+        offlineAt: deregisteredAt,
+      },
+    });
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const row = result.rows[0] as { agent_name: string; version: string };
-
-  publish(subjects.agentDeregistered, {
-    instanceId: body.instanceId,
-    agentName: row.agent_name,
-    version: row.version,
-    reason: body.reason,
-    deregisteredAt: new Date().toISOString(),
-  });
 
   return { ok: true };
 });
@@ -573,7 +643,39 @@ function startHealthSweep(): ReturnType<typeof setInterval> {
     void (async () => {
       try {
         const unhealthy = await markStaleUnhealthy(pool);
-        const deleted = await deleteExpired(pool);
+        let deleted = 0;
+
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          const expired = await deleteExpired(client);
+          deleted = expired.length;
+          const offlineAt = new Date().toISOString();
+          for (const row of expired) {
+            await enqueueOutboxEvent(client, {
+              type: "com.agentsphere.agent.offline",
+              source: SOURCE,
+              tenantId: row.tenant_id,
+              projectId: row.project_id ?? undefined,
+              agentId: row.instance_id,
+              data: {
+                instanceId: row.instance_id,
+                agentName: row.agent_name,
+                version: row.version,
+                reason: "HEARTBEAT_EXPIRED",
+                offlineAt,
+                lastHeartbeat: row.last_heartbeat.toISOString(),
+              },
+            });
+          }
+          await client.query("COMMIT");
+        } catch (err) {
+          await client.query("ROLLBACK");
+          throw err;
+        } finally {
+          client.release();
+        }
+
         if (unhealthy > 0 || deleted > 0) {
           log.info("health sweep completed", { unhealthy, deleted });
         }
@@ -592,7 +694,18 @@ const port = Number(process.env.PORT ?? PORTS.registry);
 
 async function main(): Promise<void> {
   await initSchema(pool);
-  await connectNats();
+
+  const natsUrl = optional("AS_NATS_URL", "");
+  if (natsUrl) {
+    bus = await createEventBus({
+      natsUrl,
+      source: SOURCE,
+      logger: log,
+      required: false,
+    });
+    stopOutboxRelay = startOutboxRelay({ pool, bus, logger: log });
+  }
+
   startHealthSweep();
 
   await app.listen({ port, host: "0.0.0.0" });
@@ -611,10 +724,11 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 async function shutdown(signal: string): Promise<void> {
   log.info("received shutdown signal", { signal });
+  stopOutboxRelay?.();
   await app.close();
   await pool.end();
-  if (nats) {
-    await nats.drain();
+  if (bus) {
+    await bus.close();
   }
   process.exit(0);
 }

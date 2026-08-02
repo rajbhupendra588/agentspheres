@@ -1,102 +1,76 @@
 import { z } from "zod";
 
-// ---------------------------------------------------------------------------
-// Multi-tenancy
-// ---------------------------------------------------------------------------
+export {
+  TenantIdSchema,
+  ProjectIdSchema,
+  DEFAULT_TENANT_ID,
+  TENANT_HEADER,
+  PROJECT_HEADER,
+  MeshRoleSchema,
+  JwtClaimsSchema,
+  TokenRequestSchema,
+  TokenResponseSchema,
+  TenantStatusSchema,
+  TenantRecordSchema,
+  CreateTenantRequestSchema,
+  TenantMemberSchema,
+  InviteTenantMemberRequestSchema,
+  type TenantId,
+  type ProjectId,
+  type MeshRole,
+  type JwtClaims,
+  type TokenRequest,
+  type TokenResponse,
+  type TenantStatus,
+  type TenantRecord,
+  type CreateTenantRequest,
+  type TenantMember,
+  type InviteTenantMemberRequest,
+} from "./tenancy.js";
 
-/** Organization / hard isolation boundary. */
-export const TenantIdSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, "Invalid tenant id");
+export {
+  MeshEventTypeSchema,
+  subjects,
+  EVENT_TYPE_TO_SUBJECT,
+  JETSTREAM_STREAM,
+  JETSTREAM_SUBJECTS,
+  MeshEventSchema,
+  MeshEventProjectionSchema,
+  AgentRegisteredDataSchema,
+  AgentUpdatedDataSchema,
+  HeartbeatReceivedDataSchema,
+  AgentOfflineDataSchema,
+  AgentDeregisteredDataSchema,
+  ToolRegisteredDataSchema,
+  TaskStartedDataSchema,
+  TaskCompletedDataSchema,
+  TaskFailedDataSchema,
+  RoutingFailedDataSchema,
+  WorkflowStartedDataSchema,
+  WorkflowCompletedDataSchema,
+  createMeshEvent,
+  toEventProjection,
+  subjectForEventType,
+  type MeshEventType,
+  type EventSubject,
+  type MeshEvent,
+  type MeshEventProjection,
+  type AgentRegisteredData,
+  type AgentUpdatedData,
+  type HeartbeatReceivedData,
+  type AgentOfflineData,
+  type AgentDeregisteredData,
+  type ToolRegisteredData,
+  type TaskStartedData,
+  type TaskCompletedData,
+  type TaskFailedData,
+  type RoutingFailedData,
+  type WorkflowStartedData,
+  type WorkflowCompletedData,
+  type CreateMeshEventInput,
+} from "./events.js";
 
-export type TenantId = z.infer<typeof TenantIdSchema>;
-
-/** Optional project scope within a tenant. */
-export const ProjectIdSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, "Invalid project id");
-
-export type ProjectId = z.infer<typeof ProjectIdSchema>;
-
-export const DEFAULT_TENANT_ID = "default" as const;
-
-export const TENANT_HEADER = "x-tenant-id" as const;
-export const PROJECT_HEADER = "x-project-id" as const;
-
-export const MeshRoleSchema = z.enum(["admin", "developer", "agent", "viewer"]);
-export type MeshRole = z.infer<typeof MeshRoleSchema>;
-
-export const JwtClaimsSchema = z.object({
-  sub: z.string().min(1),
-  role: MeshRoleSchema,
-  tenantId: TenantIdSchema,
-  projectId: ProjectIdSchema.optional(),
-});
-
-export type JwtClaims = z.infer<typeof JwtClaimsSchema>;
-
-export const TokenRequestSchema = z.object({
-  subject: z.string().min(1),
-  role: MeshRoleSchema.optional(),
-  tenantId: TenantIdSchema,
-  projectId: ProjectIdSchema.optional(),
-});
-
-export type TokenRequest = z.infer<typeof TokenRequestSchema>;
-
-export const TokenResponseSchema = z.object({
-  accessToken: z.string().min(1),
-  expiresIn: z.number().int().positive(),
-  tokenType: z.literal("Bearer"),
-  tenantId: TenantIdSchema,
-  projectId: ProjectIdSchema.optional(),
-  role: MeshRoleSchema,
-  subject: z.string().min(1),
-});
-
-export type TokenResponse = z.infer<typeof TokenResponseSchema>;
-
-export const TenantStatusSchema = z.enum(["active", "suspended"]);
-export type TenantStatus = z.infer<typeof TenantStatusSchema>;
-
-export const TenantRecordSchema = z.object({
-  tenantId: TenantIdSchema,
-  displayName: z.string().min(1).max(200),
-  status: TenantStatusSchema,
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  agentCount: z.number().int().nonnegative().optional(),
-  memberCount: z.number().int().nonnegative().optional(),
-});
-
-export type TenantRecord = z.infer<typeof TenantRecordSchema>;
-
-export const CreateTenantRequestSchema = z.object({
-  tenantId: TenantIdSchema,
-  displayName: z.string().min(1).max(200).optional(),
-});
-
-export type CreateTenantRequest = z.infer<typeof CreateTenantRequestSchema>;
-
-export const TenantMemberSchema = z.object({
-  subject: z.string().min(1),
-  role: MeshRoleSchema,
-  tenantId: TenantIdSchema,
-  createdAt: z.string().datetime(),
-});
-
-export type TenantMember = z.infer<typeof TenantMemberSchema>;
-
-export const InviteTenantMemberRequestSchema = z.object({
-  subject: z.string().min(1),
-  role: MeshRoleSchema.optional(),
-});
-
-export type InviteTenantMemberRequest = z.infer<typeof InviteTenantMemberRequestSchema>;
+import { TenantIdSchema, ProjectIdSchema } from "./tenancy.js";
 
 // ---------------------------------------------------------------------------
 // AgentCard
@@ -245,13 +219,20 @@ export type InvokeResponse = z.infer<typeof InvokeResponseSchema>;
 // Tools
 // ---------------------------------------------------------------------------
 
+export const ToolStatusSchema = z.enum(["ACTIVE", "DEPRECATED"]);
+export type ToolStatus = z.infer<typeof ToolStatusSchema>;
+
 export const ToolDefinitionSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
-  version: z.string().optional(),
+  version: z.string().min(1).optional(),
   inputSchema: z.record(z.unknown()),
   outputSchema: z.record(z.unknown()).optional(),
   tags: z.array(z.string()).optional(),
+  /** Owning tenant; when omitted, resolved from x-tenant-id. */
+  tenantId: TenantIdSchema.optional(),
+  status: ToolStatusSchema.optional(),
+  builtin: z.boolean().optional(),
 });
 
 export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
@@ -261,6 +242,8 @@ export const ToolExecuteRequestSchema = z.object({
   input: z.unknown(),
   agentName: z.string().optional(),
   correlationId: z.string().optional(),
+  tenantId: TenantIdSchema.optional(),
+  version: z.string().optional(),
 });
 
 export type ToolExecuteRequest = z.infer<typeof ToolExecuteRequestSchema>;
@@ -334,20 +317,6 @@ export const ApiErrorSchema = z.object({
 });
 
 export type ApiError = z.infer<typeof ApiErrorSchema>;
-
-// ---------------------------------------------------------------------------
-// NATS event subjects
-// ---------------------------------------------------------------------------
-
-export const subjects = {
-  agentRegistered: "agentsphere.agent.registered",
-  agentHeartbeat: "agentsphere.agent.heartbeat",
-  agentDeregistered: "agentsphere.agent.deregistered",
-  invokeCompleted: "agentsphere.invoke.completed",
-  workflowUpdated: "agentsphere.workflow.updated",
-} as const;
-
-export type EventSubject = (typeof subjects)[keyof typeof subjects];
 
 // ---------------------------------------------------------------------------
 // Service ports

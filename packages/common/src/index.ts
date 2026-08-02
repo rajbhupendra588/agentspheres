@@ -23,3 +23,24 @@ export {
   resolveProjectId,
   tenantHeaders,
 } from "./tenant.js";
+export {
+  createEventBus,
+  ensureOutboxSchema,
+  enqueueOutboxEvent,
+  startOutboxRelay,
+  type EventBus,
+  type EventBusOptions,
+  type SubscribeOptions,
+  type OutboxEnqueueInput,
+  type OutboxRelayOptions,
+} from "./events/index.js";
+export {
+  runMigrations,
+  resolveMigrationsDirectory,
+  loadMigrationFiles,
+  parseMigrationFileName,
+  checksumSql,
+  type MigrateOptions,
+  type MigrateResult,
+  type MigrationFile,
+} from "./migrate.js";

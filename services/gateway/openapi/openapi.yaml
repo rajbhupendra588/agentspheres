@@ -63,6 +63,13 @@ info:
     ## SSE
     `GET /mesh/notify/v1/events` streams `text/event-stream`. Browsers cannot attach Bearer tokens to `EventSource`;
     use a same-origin proxy (Console) or open/locked gateway with cookie/proxy auth in front.
+
+    ## Event bus (JetStream)
+    Control-plane lifecycle events use NATS JetStream (stream `AGENTSPHERE`, CloudEvents envelopes).
+    Notable types: `com.agentsphere.agent.*`, `com.agentsphere.tool.registered`,
+    `com.agentsphere.task.*`, `com.agentsphere.routing.failed`, `com.agentsphere.workflow.*`.
+    Registry writes use a transactional outbox; Discovery invalidates Redis on agent events;
+    Notification bridges JetStream → SSE.
 servers:
   - url: http://localhost:8080
     description: Local Gateway
@@ -792,9 +799,18 @@ paths:
     get:
       tags: [Tools]
       operationId: listTools
-      summary: List registered tools
+      summary: List registered tools for the caller tenant
+      description: |
+        Returns tools persisted in Postgres for `x-tenant-id` (or JWT tenant).
+        Builtin tools are seeded into the `default` tenant.
       parameters:
         - $ref: "#/components/parameters/CorrelationIdHeader"
+        - $ref: "#/components/parameters/TenantHeader"
+        - name: includeDeprecated
+          in: query
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: Tools
@@ -809,9 +825,13 @@ paths:
     post:
       tags: [Tools]
       operationId: registerTool
-      summary: Register a tool definition
+      summary: Register or update a tool definition (idempotent)
+      description: |
+        Upserts `(tenantId, name, version)` in the tool registry with optimistic `rowVersion`.
+        Emits `com.agentsphere.tool.registered` on the JetStream mesh event bus.
       parameters:
         - $ref: "#/components/parameters/CorrelationIdHeader"
+        - $ref: "#/components/parameters/TenantHeader"
       requestBody:
         required: true
         content:
@@ -820,6 +840,12 @@ paths:
               $ref: "#/components/schemas/ToolDefinition"
       responses:
         "200":
+          description: Tool updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterToolResponse"
+        "201":
           description: Tool registered
           content:
             application/json:
@@ -827,6 +853,55 @@ paths:
                 $ref: "#/components/schemas/RegisterToolResponse"
         "400":
           $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/tools/v1/tools/deprecate:
+    post:
+      tags: [Tools]
+      operationId: deprecateTool
+      summary: Soft-deprecate a tool version
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+        - $ref: "#/components/parameters/TenantHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                version:
+                  type: string
+                  default: "1.0.0"
+      responses:
+        "200":
+          description: Tool deprecated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, name, version, status]
+                properties:
+                  ok:
+                    type: boolean
+                  name:
+                    type: string
+                  version:
+                    type: string
+                  status:
+                    type: string
+                    const: DEPRECATED
+        "404":
+          $ref: "#/components/responses/NotFound"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "429":
@@ -1910,6 +1985,7 @@ components:
           type: string
         version:
           type: string
+          default: "1.0.0"
         inputSchema:
           type: object
           additionalProperties: true
@@ -1920,6 +1996,13 @@ components:
           type: array
           items:
             type: string
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        status:
+          type: string
+          enum: [ACTIVE, DEPRECATED]
+        builtin:
+          type: boolean
 
     ToolsListResponse:
       type: object
@@ -1932,6 +2015,8 @@ components:
         count:
           type: integer
           minimum: 0
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
 
     RegisterToolResponse:
       type: object
@@ -1941,7 +2026,11 @@ components:
           $ref: "#/components/schemas/ToolDefinition"
         status:
           type: string
-          const: REGISTERED
+          enum: [REGISTERED, UPDATED]
+        rowVersion:
+          type: integer
+          minimum: 1
+          description: Optimistic concurrency version for the tool row
 
     ToolExecuteRequest:
       type: object

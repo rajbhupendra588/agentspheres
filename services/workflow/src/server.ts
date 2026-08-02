@@ -12,7 +12,11 @@ import type { InvokeResponse } from "@agentsphere/contracts";
 import Fastify from "fastify";
 import { z } from "zod";
 import { config } from "./config.js";
-import { closeNats, publishWorkflowUpdated } from "./nats.js";
+import {
+  closeNats,
+  publishWorkflowCompleted,
+  publishWorkflowStarted,
+} from "./nats.js";
 import { createRun, getRun, listRuns, updateRun, type WorkflowStep } from "./store.js";
 
 const log = createLogger("workflow");
@@ -112,7 +116,7 @@ export async function buildServer() {
       steps: initialSteps,
     });
 
-    await publishWorkflowUpdated(run);
+    await publishWorkflowStarted(run, tenantId, projectId);
 
     try {
       let steps = markStepRunning(run.steps, 0);
@@ -143,7 +147,7 @@ export async function buildServer() {
         result: synthesis.output,
       })!;
 
-      await publishWorkflowUpdated(run);
+      await publishWorkflowCompleted(run, tenantId, projectId);
 
       return {
         runId: run.runId,
@@ -162,7 +166,7 @@ export async function buildServer() {
         steps,
       })!;
 
-      await publishWorkflowUpdated(run);
+      await publishWorkflowCompleted(run, tenantId, projectId);
 
       return {
         runId: run.runId,

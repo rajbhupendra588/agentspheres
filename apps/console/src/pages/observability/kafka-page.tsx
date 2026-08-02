@@ -44,16 +44,16 @@ export function KafkaPage() {
     <PageContainer size="wide">
       <PageMotion>
         <PageHeader
-          title="Event Topics (NATS)"
-          description="AgentSphere uses NATS (not Kafka) for the event bus. Subjects are defined in @agentsphere/contracts."
+          title="Event Topics (JetStream)"
+          description="Control-plane lifecycle bus on NATS JetStream with CloudEvents envelopes. Kafka is reserved for future analytics/CDC dual-write."
         />
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Contract subjects</CardTitle>
+            <CardTitle>Stream AGENTSPHERE</CardTitle>
             <CardDescription>
-              Published NATS subjects from the shared contracts package — documentation, not a live
-              topic browser API.
+              Subjects from @agentsphere/contracts. Producers use a transactional outbox (registry)
+              or JetStream publish with Msg-Id dedup. Notification bridges JetStream → SSE.
             </CardDescription>
           </CardHeader>
           <CardContent>

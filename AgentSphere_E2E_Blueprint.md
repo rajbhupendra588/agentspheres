@@ -230,7 +230,7 @@ TypeScript package `@agentsphere/sdk`:
 
 - Query: capability, version range, labels, tenant
 - Strategy: weighted round-robin over healthy instances
-- Cache: Redis TTL 5s + invalidate invalidation on registry events
+- Cache: Redis TTL 5s + JetStream invalidation on `agentsphere.agent.*` (registered/updated/offline/deregistered; heartbeat only when status ≠ HEALTHY)
 
 ---
 
@@ -317,24 +317,46 @@ Gateway prefixes: `/mesh/registry`, `/mesh/discovery`, `/mesh/runtime`, …
 
 ## 22. Database
 
-PostgreSQL schemas:
+PostgreSQL with **Flyway-compatible** versioned SQL in `db/migrations/` (`V{n}__*.sql`), applied by `runMigrations()` into `flyway_schema_history` (advisory-locked; safe from registry + memory boot).
 
-- `registry.*` — agents/instances
-- `memory.*` — records + embeddings
-- `auth.*` — clients/roles (dev simplified)
-- `audit.*` — append-only audit
+| Version | Schema |
+| --- | --- |
+| V1 | tenants, agent_instances, tenant_members |
+| V2 | event_outbox |
+| V3 | memory_records |
+| V4 | tools (independent tool registry) |
+
+Future: `auth.*` clients/roles, `audit.*` append-only audit, embeddings/pgvector.
 
 ---
 
-## 23. Events (NATS)
+## 23. Events (NATS JetStream)
 
-| Subject | Payload |
-| --- | --- |
-| `agentsphere.agent.registered` | AgentCard + instance |
-| `agentsphere.agent.heartbeat` | instanceId, ts |
-| `agentsphere.agent.deregistered` | instanceId |
-| `agentsphere.invoke.completed` | latency, status |
-| `agentsphere.workflow.updated` | runId, status |
+**Decision:** The mesh control-plane event bus is **NATS JetStream** (stream `AGENTSPHERE`, subjects `agentsphere.>`).  
+Kafka is reserved for future analytics/CDC dual-write — JetStream already provides durable, replayable, tenant-tagged lifecycle events with Msg-Id dedup and durable consumers.
+
+**Envelope:** CloudEvents 1.0 structured JSON (`MeshEvent` in `@agentsphere/contracts`). Every event carries `tenantid` (mandatory).
+
+**Delivery:**
+- Registry domain writes → Postgres **transactional outbox** → outbox relay → JetStream
+- Runtime / workflow / tool-engine → JetStream publish (Msg-Id = event id)
+- Notification service → durable consumer → SSE fan-out to console
+- Discovery → durable consumer on `agentsphere.agent.>` → Redis cache invalidation
+
+| CloudEvents type | Subject | Producer |
+| --- | --- | --- |
+| `com.agentsphere.agent.registered` | `agentsphere.agent.registered` | Registry (outbox) |
+| `com.agentsphere.agent.updated` | `agentsphere.agent.updated` | Registry (outbox) |
+| `com.agentsphere.agent.heartbeat` | `agentsphere.agent.heartbeat` | Registry (outbox) |
+| `com.agentsphere.agent.offline` | `agentsphere.agent.offline` | Registry (eviction / deregister) |
+| `com.agentsphere.agent.deregistered` | `agentsphere.agent.deregistered` | Registry (outbox) |
+| `com.agentsphere.tool.registered` | `agentsphere.tool.registered` | Tool Engine |
+| `com.agentsphere.task.started` | `agentsphere.task.started` | Runtime |
+| `com.agentsphere.task.completed` | `agentsphere.task.completed` | Runtime |
+| `com.agentsphere.task.failed` | `agentsphere.task.failed` | Runtime |
+| `com.agentsphere.routing.failed` | `agentsphere.routing.failed` | Runtime |
+| `com.agentsphere.workflow.started` | `agentsphere.workflow.started` | Workflow |
+| `com.agentsphere.workflow.completed` | `agentsphere.workflow.completed` | Workflow |
 
 ---
 

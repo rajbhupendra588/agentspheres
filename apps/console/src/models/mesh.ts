@@ -198,6 +198,9 @@ export interface MeshEvent {
   type: string;
   payload: unknown;
   ts: string;
+  tenantId?: string;
+  projectId?: string;
+  correlationId?: string;
 }
 
 export interface ResearchSynthesizeRequest {

@@ -18,6 +18,11 @@ import {
   resolveTenantId,
   toErrorBody,
 } from "@agentsphere/common";
+import {
+  buildDiscoveryCacheKey,
+  DISCOVERY_CACHE_TTL_SECONDS,
+} from "./cache.js";
+import { startCacheInvalidation, stopCacheInvalidation } from "./invalidate.js";
 import { weightedRoundRobinOrder } from "./round-robin.js";
 
 const log = createLogger("discovery");
@@ -82,7 +87,9 @@ function matchesLabels(row: AgentRow, labels?: Record<string, string>): boolean 
   return Object.entries(labels).every(([key, value]) => rowLabels[key] === value);
 }
 
-async function fetchHealthyInstances(query: DiscoveryQuery & { tenant: string }): Promise<DiscoveryInstance[]> {
+async function fetchHealthyInstances(
+  query: DiscoveryQuery & { tenant: string },
+): Promise<DiscoveryInstance[]> {
   const result = await pool.query<AgentRow>(
     `
     SELECT
@@ -114,7 +121,12 @@ async function discover(
     projectId: projectId ?? query.projectId,
   };
 
-  const cacheKey = `discover:${effective.tenant}:${effective.projectId ?? "_"}:${effective.capability}:${effective.version ?? "_"}`;
+  const cacheKey = buildDiscoveryCacheKey({
+    tenantId: effective.tenant,
+    projectId: effective.projectId,
+    capability: effective.capability,
+    version: effective.version,
+  });
 
   if (redis) {
     try {
@@ -142,7 +154,7 @@ async function discover(
 
   if (redis) {
     try {
-      await redis.set(cacheKey, JSON.stringify(result), "EX", 5);
+      await redis.set(cacheKey, JSON.stringify(result), "EX", DISCOVERY_CACHE_TTL_SECONDS);
     } catch (err) {
       log.warn("Redis cache write failed", {
         error: err instanceof Error ? err.message : String(err),
@@ -153,7 +165,9 @@ async function discover(
   return result;
 }
 
-function parseGetQuery(query: Record<string, string | string[] | undefined>): DiscoveryQuery {
+function parseGetQuery(
+  query: Record<string, string | string[] | undefined>,
+): DiscoveryQuery {
   const raw = query;
   const limitRaw = raw.limit;
 
@@ -199,6 +213,7 @@ const port = Number(process.env.PORT ?? PORTS.discovery);
 
 async function main(): Promise<void> {
   await connectRedis();
+  await startCacheInvalidation(redis);
   await app.listen({ port, host: "0.0.0.0" });
   log.info("discovery service listening", { port });
 }
@@ -215,6 +230,7 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 async function shutdown(signal: string): Promise<void> {
   log.info("received shutdown signal", { signal });
+  await stopCacheInvalidation();
   await app.close();
   await pool.end();
   if (redis) {

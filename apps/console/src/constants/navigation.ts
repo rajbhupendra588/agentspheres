@@ -155,10 +155,10 @@ export const NAV_SECTIONS: NavSection[] = [
         keywords: ["health", "status"],
       },
       {
-        label: "Kafka Topics",
+        label: "Event Topics",
         href: "/kafka",
-        description: "Kafka topic browser",
-        keywords: ["kafka", "topics"],
+        description: "NATS JetStream subject catalog",
+        keywords: ["nats", "jetstream", "topics", "kafka", "events"],
       },
     ],
   },

@@ -11,13 +11,16 @@ COPY packages ./packages
 COPY services ./services
 COPY agents ./agents
 COPY apps ./apps
+COPY db ./db
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
+COPY db ./db
 RUN pnpm -r run build
 
 FROM base AS runtime
 ENV NODE_ENV=production
+ENV AS_MIGRATIONS_DIR=/app/db/migrations
 COPY --from=build /app /app
 RUN chown -R node:node /app
 USER node
