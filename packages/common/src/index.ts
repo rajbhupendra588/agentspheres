@@ -16,6 +16,11 @@ export { healthRoutes } from "./health.js";
 export { registerGracefulShutdown } from "./shutdown.js";
 export { registerSecurityHeaders } from "./security-headers.js";
 export {
+  registerServiceRateLimit,
+  routeRateLimit,
+  type ServiceRateLimitOptions,
+} from "./rate-limit.js";
+export {
   DEFAULT_TENANT_ID,
   TENANT_HEADER,
   PROJECT_HEADER,

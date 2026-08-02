@@ -18,9 +18,11 @@ import {
   enqueueOutboxEvent,
   healthRoutes,
   optional,
+  registerServiceRateLimit,
   required,
   resolveProjectId,
   resolveTenantId,
+  routeRateLimit,
   startOutboxRelay,
   toErrorBody,
   ulid,
@@ -35,7 +37,12 @@ const SOURCE = "agentsphere/registry";
 let bus: EventBus | undefined;
 let stopOutboxRelay: (() => void) | undefined;
 
-const app = Fastify({ logger: false });
+const app = Fastify({ logger: false, trustProxy: true });
+
+await registerServiceRateLimit(app, {
+  max: Number(optional("AS_RATE_LIMIT_MAX", "200")),
+  timeWindowMs: Number(optional("AS_RATE_LIMIT_WINDOW_MS", "60000")),
+});
 
 app.register(healthRoutes);
 
@@ -44,7 +51,7 @@ app.setErrorHandler((err, _request, reply) => {
   reply.status(statusCode).send(body);
 });
 
-app.post("/v1/register", async (request, reply) => {
+app.post("/v1/register", routeRateLimit({ max: 120 }), async (request, reply) => {
   const body = RegisterAgentRequestSchema.parse(request.body);
   const { card, baseUrl, weight } = body;
   const instanceId = body.instanceId ?? ulid();
@@ -185,7 +192,7 @@ app.post("/v1/register", async (request, reply) => {
   return response;
 });
 
-app.post("/v1/heartbeat", async (request, reply) => {
+app.post("/v1/heartbeat", routeRateLimit({ max: 600 }), async (request, reply) => {
   const body = HeartbeatRequestSchema.parse(request.body);
   const timestamp = body.timestamp ? new Date(body.timestamp) : new Date();
   const status = body.status ?? "HEALTHY";
@@ -245,7 +252,7 @@ app.post("/v1/heartbeat", async (request, reply) => {
   return { ok: true };
 });
 
-app.post("/v1/deregister", async (request, reply) => {
+app.post("/v1/deregister", routeRateLimit({ max: 120 }), async (request, reply) => {
   const body = DeregisterAgentRequestSchema.parse(request.body);
   const deregisteredAt = new Date().toISOString();
 
@@ -318,7 +325,7 @@ app.post("/v1/deregister", async (request, reply) => {
   return { ok: true };
 });
 
-app.get("/v1/tenants", async () => {
+app.get("/v1/tenants", routeRateLimit(), async () => {
   const result = await pool.query<{
     tenant_id: string;
     display_name: string;
@@ -372,7 +379,7 @@ app.get("/v1/tenants", async () => {
   };
 });
 
-app.post("/v1/tenants", async (request, reply) => {
+app.post("/v1/tenants", routeRateLimit({ max: 30 }), async (request, reply) => {
   const body = CreateTenantRequestSchema.parse(request.body);
   const displayName = body.displayName?.trim() || body.tenantId;
 
@@ -417,7 +424,7 @@ app.post("/v1/tenants", async (request, reply) => {
   });
 });
 
-app.get("/v1/tenants/:tenantId", async (request, reply) => {
+app.get("/v1/tenants/:tenantId", routeRateLimit(), async (request, reply) => {
   const { tenantId } = request.params as { tenantId: string };
   TenantIdSchema.parse(tenantId);
 
@@ -464,7 +471,7 @@ app.get("/v1/tenants/:tenantId", async (request, reply) => {
   });
 });
 
-app.get("/v1/tenants/:tenantId/members", async (request, reply) => {
+app.get("/v1/tenants/:tenantId/members", routeRateLimit(), async (request, reply) => {
   const { tenantId } = request.params as { tenantId: string };
   TenantIdSchema.parse(tenantId);
 
@@ -505,7 +512,7 @@ app.get("/v1/tenants/:tenantId/members", async (request, reply) => {
   };
 });
 
-app.post("/v1/tenants/:tenantId/members", async (request, reply) => {
+app.post("/v1/tenants/:tenantId/members", routeRateLimit({ max: 60 }), async (request, reply) => {
   const { tenantId } = request.params as { tenantId: string };
   TenantIdSchema.parse(tenantId);
   const body = InviteTenantMemberRequestSchema.parse(request.body);
@@ -544,7 +551,7 @@ app.post("/v1/tenants/:tenantId/members", async (request, reply) => {
   });
 });
 
-app.get("/v1/agents", async (request) => {
+app.get("/v1/agents", routeRateLimit(), async (request) => {
   const tenantId = resolveTenantId(request.headers);
   const projectId = resolveProjectId(request.headers);
   const result = await pool.query(
@@ -569,7 +576,7 @@ app.get("/v1/agents", async (request) => {
   };
 });
 
-app.get("/v1/agents/:instanceId", async (request, reply) => {
+app.get("/v1/agents/:instanceId", routeRateLimit(), async (request, reply) => {
   const { instanceId } = request.params as { instanceId: string };
   const tenantId = resolveTenantId(request.headers);
 

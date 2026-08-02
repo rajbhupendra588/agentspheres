@@ -1,6 +1,5 @@
 import Fastify from "fastify";
 import jwt from "jsonwebtoken";
-import rateLimit from "@fastify/rate-limit";
 import {
   JwtClaimsSchema,
   PORTS,
@@ -15,8 +14,10 @@ import {
   healthRoutes,
   optional,
   registerGracefulShutdown,
+  registerServiceRateLimit,
   resolveBootstrapSecret,
   resolveJwtSecret,
+  routeRateLimit,
   toErrorBody,
 } from "@agentsphere/common";
 
@@ -31,30 +32,9 @@ const port = Number(process.env.PORT ?? PORTS.auth);
 
 const app = Fastify({ logger: false, trustProxy: true });
 
-await app.register(rateLimit, {
+await registerServiceRateLimit(app, {
   max: Number(optional("AS_AUTH_RATE_LIMIT_MAX", "30")),
-  timeWindow: Number(optional("AS_AUTH_RATE_LIMIT_WINDOW_MS", "60000")),
-  addHeadersOnExceeding: {
-    "x-ratelimit-limit": true,
-    "x-ratelimit-remaining": true,
-    "x-ratelimit-reset": true,
-  },
-  addHeaders: {
-    "x-ratelimit-limit": true,
-    "x-ratelimit-remaining": true,
-    "x-ratelimit-reset": true,
-    "retry-after": true,
-  },
-  errorResponseBuilder: (_request, context) => {
-    const afterSeconds = Math.max(1, Math.ceil(context.ttl / 1000));
-    return Object.assign(
-      new Error(`Rate limit exceeded. Retry after ${afterSeconds} seconds.`),
-      {
-        statusCode: context.statusCode,
-        code: "RATE_LIMITED",
-      },
-    );
-  },
+  timeWindowMs: Number(optional("AS_AUTH_RATE_LIMIT_WINDOW_MS", "60000")),
 });
 
 app.register(healthRoutes);
@@ -100,7 +80,7 @@ function assertTokenMintAuthorized(request: { headers: Record<string, unknown> }
   }
 }
 
-app.post("/v1/token", async (request) => {
+app.post("/v1/token", routeRateLimit({ max: 30 }), async (request) => {
   assertTokenMintAuthorized(request);
 
   const body = TokenRequestSchema.parse(request.body);
@@ -134,9 +114,9 @@ app.post("/v1/token", async (request) => {
   });
 });
 
-app.get("/v1/introspect", async (request, reply) => {
+app.get("/v1/introspect", routeRateLimit({ max: 60 }), async (request, reply) => {
   const header = request.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
+  if (!header || header.slice(0, 7).toLowerCase() !== "bearer ") {
     reply.status(401);
     return {
       error: {

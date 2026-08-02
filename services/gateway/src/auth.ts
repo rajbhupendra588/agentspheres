@@ -8,7 +8,14 @@ import {
 import { toErrorBody } from "@agentsphere/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
+import { RateLimiterMemory } from "rate-limiter-flexible";
 import { config } from "./config.js";
+
+/** Explicit auth-path limiter so authorization work is rate-limited (CWE-307/770). */
+const meshAuthLimiter = new RateLimiterMemory({
+  points: config.rateLimitMax,
+  duration: Math.max(1, Math.ceil(config.rateLimitWindowMs / 1000)),
+});
 
 const PUBLIC_MESH_PATHS = new Set([
   "/mesh/auth/v1/token",
@@ -28,10 +35,28 @@ declare module "fastify" {
   }
 }
 
+/**
+ * Extract a Bearer token without regular expressions.
+ * Avoids ReDoS from unbounded whitespace matching on attacker-controlled headers.
+ */
 function extractBearerToken(authorization: string | undefined): string | null {
   if (!authorization) return null;
-  const match = /^Bearer\s+(.+)$/i.exec(authorization);
-  return match?.[1] ?? null;
+  if (authorization.length < 7) return null;
+  if (authorization.slice(0, 6).toLowerCase() !== "bearer") return null;
+
+  let i = 6;
+  let whitespace = 0;
+  while (i < authorization.length) {
+    const code = authorization.charCodeAt(i);
+    if (code !== 32 && code !== 9) break;
+    i += 1;
+    whitespace += 1;
+    if (whitespace > 8) return null;
+  }
+  if (whitespace === 0) return null;
+
+  const token = authorization.slice(i).trim();
+  return token.length > 0 ? token : null;
 }
 
 function headerString(
@@ -57,6 +82,19 @@ export async function meshAuthHook(
   const path = req.url.split("?")[0] ?? req.url;
 
   if (!path.startsWith("/mesh/")) {
+    return;
+  }
+
+  try {
+    await meshAuthLimiter.consume(String(req.ip || "unknown"));
+  } catch {
+    const { statusCode, body } = toErrorBody(
+      Object.assign(new Error("Rate limit exceeded"), {
+        statusCode: 429,
+        code: "RATE_LIMITED",
+      }),
+    );
+    reply.status(statusCode).send(body);
     return;
   }
 

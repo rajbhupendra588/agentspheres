@@ -4,9 +4,10 @@ import {
   httpJson,
   registerGracefulShutdown,
   registerSecurityHeaders,
+  registerServiceRateLimit,
+  routeRateLimit,
   toErrorBody,
 } from "@agentsphere/common";
-import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import { config, downstreamServices } from "./config.js";
 import { meshAuthHook } from "./auth.js";
@@ -50,39 +51,10 @@ export async function buildServer() {
 
   await registerSecurityHeaders(app);
 
-  await app.register(rateLimit, {
+  await registerServiceRateLimit(app, {
     max: config.rateLimitMax,
-    timeWindow: config.rateLimitWindowMs,
-    addHeadersOnExceeding: {
-      "x-ratelimit-limit": true,
-      "x-ratelimit-remaining": true,
-      "x-ratelimit-reset": true,
-    },
-    addHeaders: {
-      "x-ratelimit-limit": true,
-      "x-ratelimit-remaining": true,
-      "x-ratelimit-reset": true,
-      "retry-after": true,
-    },
-    allowList: (req) => {
-      const path = req.url.split("?")[0] ?? req.url;
-      return (
-        path === "/healthz" ||
-        path === "/readyz" ||
-        path === "/openapi.yaml" ||
-        path === "/openapi.json"
-      );
-    },
-    errorResponseBuilder: (_req, context) => {
-      const afterSeconds = Math.max(1, Math.ceil(context.ttl / 1000));
-      return Object.assign(
-        new Error(`Rate limit exceeded. Retry after ${afterSeconds} seconds.`),
-        {
-          statusCode: context.statusCode,
-          code: "RATE_LIMITED",
-        },
-      );
-    },
+    timeWindowMs: config.rateLimitWindowMs,
+    allowPaths: ["/healthz", "/readyz", "/openapi.yaml", "/openapi.json"],
   });
 
   app.addHook("preHandler", meshAuthHook);
@@ -90,14 +62,14 @@ export async function buildServer() {
   await app.register(healthRoutes);
   await registerOpenApiRoutes(app);
 
-  app.get("/", async () => ({
+  app.get("/", routeRateLimit(), async () => ({
     name: "AgentSphere Gateway",
     version: "0.1.0",
     mode: config.gatewayOpen ? "open" : "locked",
     openapi: "/openapi.yaml",
   }));
 
-  app.get("/mesh/health", async () => {
+  app.get("/mesh/health", routeRateLimit({ max: 120 }), async () => {
     const checks = await Promise.allSettled(
       downstreamServices.map(async (service) => {
         const health = await httpJson<{ status: string; ts: string }>(
@@ -129,7 +101,7 @@ export async function buildServer() {
     };
   });
 
-  app.all("/mesh/auth/*", async (req, reply) => {
+  app.all("/mesh/auth/*", routeRateLimit({ max: 60 }), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/auth");
     await proxyRequest(req, reply, {
       targetBase: config.authUrl,
@@ -137,7 +109,7 @@ export async function buildServer() {
     });
   });
 
-  app.all("/mesh/registry/*", async (req, reply) => {
+  app.all("/mesh/registry/*", routeRateLimit(), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/registry");
     await proxyRequest(req, reply, {
       targetBase: config.registryUrl,
@@ -145,7 +117,7 @@ export async function buildServer() {
     });
   });
 
-  app.all("/mesh/discovery/*", async (req, reply) => {
+  app.all("/mesh/discovery/*", routeRateLimit(), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/discovery");
     await proxyRequest(req, reply, {
       targetBase: config.discoveryUrl,
@@ -153,7 +125,7 @@ export async function buildServer() {
     });
   });
 
-  app.all("/mesh/runtime/*", async (req, reply) => {
+  app.all("/mesh/runtime/*", routeRateLimit(), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/runtime");
     await proxyRequest(req, reply, {
       targetBase: config.runtimeUrl,
@@ -161,7 +133,7 @@ export async function buildServer() {
     });
   });
 
-  app.all("/mesh/workflow/*", async (req, reply) => {
+  app.all("/mesh/workflow/*", routeRateLimit(), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/workflow");
     await proxyRequest(req, reply, {
       targetBase: config.workflowUrl,
@@ -169,7 +141,7 @@ export async function buildServer() {
     });
   });
 
-  app.all("/mesh/tools/*", async (req, reply) => {
+  app.all("/mesh/tools/*", routeRateLimit(), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/tools");
     await proxyRequest(req, reply, {
       targetBase: config.toolEngineUrl,
@@ -177,7 +149,7 @@ export async function buildServer() {
     });
   });
 
-  app.all("/mesh/memory/*", async (req, reply) => {
+  app.all("/mesh/memory/*", routeRateLimit(), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/memory");
     await proxyRequest(req, reply, {
       targetBase: config.memoryUrl,
@@ -185,7 +157,7 @@ export async function buildServer() {
     });
   });
 
-  app.all("/mesh/notify/*", async (req, reply) => {
+  app.all("/mesh/notify/*", routeRateLimit(), async (req, reply) => {
     const targetPath = meshTargetPath(req.url, "/mesh/notify");
     await proxyRequest(req, reply, {
       targetBase: config.notificationUrl,
