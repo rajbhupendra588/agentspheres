@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-server
+coverage
+.env
+.env.local
+*.log
+.DS_Store
+.turbo
+.next
+apps/console/dist
+apps/console/dist-server
+apps/console/legacy-public
+*.tsbuildinfo
+.pnpm-store

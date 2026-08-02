@@ -1,0 +1,335 @@
+name: agentsphere
+
+x-service-env: &service-env
+  AS_JWT_SECRET: ${AS_JWT_SECRET:-agentsphere-dev-secret-change-me}
+  AS_BOOTSTRAP_SECRET: ${AS_BOOTSTRAP_SECRET:-agentsphere-dev-bootstrap}
+  # Local E2E stays open; production compose overrides to false.
+  AS_GATEWAY_OPEN: ${AS_GATEWAY_OPEN:-true}
+  AS_DATABASE_URL: postgres://agentsphere:agentsphere@postgres:5432/agentsphere
+  AS_REDIS_URL: redis://redis:6379
+  AS_NATS_URL: nats://nats:4222
+  AS_AUTH_URL: http://auth:8081
+  AS_REGISTRY_URL: http://registry:8082
+  AS_DISCOVERY_URL: http://discovery:8083
+  AS_RUNTIME_URL: http://runtime:8084
+  AS_WORKFLOW_URL: http://workflow:8085
+  AS_TOOL_ENGINE_URL: http://tool-engine:8086
+  AS_MEMORY_URL: http://memory:8087
+  AS_NOTIFICATION_URL: http://notification:8088
+  AS_GATEWAY_URL: http://gateway:8080
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    <<: *restart
+    environment:
+      POSTGRES_USER: agentsphere
+      POSTGRES_PASSWORD: agentsphere
+      POSTGRES_DB: agentsphere
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentsphere -d agentsphere"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    <<: *restart
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    <<: *restart
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  auth:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/auth
+    environment:
+      <<: *service-env
+      PORT: "8081"
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  registry:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/registry
+    environment:
+      <<: *service-env
+      PORT: "8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8082/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  discovery:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/discovery
+    environment:
+      <<: *service-env
+      PORT: "8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8083/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  runtime:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/runtime
+    environment:
+      <<: *service-env
+      PORT: "8084"
+    depends_on:
+      discovery:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8084/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  workflow:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/workflow
+    environment:
+      <<: *service-env
+      PORT: "8085"
+    depends_on:
+      runtime:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8085/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  tool-engine:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/tool-engine
+    environment:
+      <<: *service-env
+      PORT: "8086"
+    ports:
+      - "8086:8086"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8086/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  memory:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/memory
+    environment:
+      <<: *service-env
+      PORT: "8087"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8087:8087"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8087/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  notification:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/notification
+    environment:
+      <<: *service-env
+      PORT: "8088"
+    ports:
+      - "8088:8088"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8088/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: services/gateway
+    environment:
+      <<: *service-env
+      PORT: "8080"
+    depends_on:
+      auth:
+        condition: service_healthy
+      registry:
+        condition: service_healthy
+      discovery:
+        condition: service_healthy
+      runtime:
+        condition: service_healthy
+      workflow:
+        condition: service_healthy
+      tool-engine:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      notification:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  researcher:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: agents/researcher
+    environment:
+      <<: *service-env
+      PORT: "9001"
+      AS_AGENT_BASE_URL: http://researcher:9001
+      AS_REGISTRY_URL: http://registry:8082
+      AS_TOOL_ENGINE_URL: http://tool-engine:8086
+      AS_MEMORY_URL: http://memory:8087
+      AS_RUNTIME_URL: http://runtime:8084
+    depends_on:
+      registry:
+        condition: service_healthy
+      tool-engine:
+        condition: service_healthy
+      memory:
+        condition: service_healthy
+      runtime:
+        condition: service_healthy
+    ports:
+      - "9001:9001"
+
+  synthesizer:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: agents/synthesizer
+    environment:
+      <<: *service-env
+      PORT: "9002"
+      AS_AGENT_BASE_URL: http://synthesizer:9002
+      AS_REGISTRY_URL: http://registry:8082
+      AS_RUNTIME_URL: http://runtime:8084
+    depends_on:
+      registry:
+        condition: service_healthy
+      runtime:
+        condition: service_healthy
+    ports:
+      - "9002:9002"
+
+  console:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_PATH: apps/console
+    environment:
+      <<: *service-env
+      PORT: "3000"
+      # Internal upstream for the console → gateway reverse proxy
+      AS_GATEWAY_URL: http://gateway:8080
+      # Empty public base → browser calls same-origin /mesh/* (proxied)
+      AS_CONSOLE_PUBLIC_GATEWAY: ""
+    depends_on:
+      gateway:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
