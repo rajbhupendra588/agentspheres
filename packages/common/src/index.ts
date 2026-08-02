@@ -21,6 +21,11 @@ export {
   type ServiceRateLimitOptions,
 } from "./rate-limit.js";
 export {
+  createIpRateLimiter,
+  enforceIpRateLimit,
+  type IpRateLimiter,
+} from "./ip-rate-limit.js";
+export {
   DEFAULT_TENANT_ID,
   TENANT_HEADER,
   PROJECT_HEADER,

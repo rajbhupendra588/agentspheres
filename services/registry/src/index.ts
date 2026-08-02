@@ -11,6 +11,8 @@ import {
   TenantMemberSchema,
   TenantRecordSchema,
 } from "@agentsphere/contracts";
+import rateLimit from "@fastify/rate-limit";
+import { RateLimiterMemory } from "rate-limiter-flexible";
 import {
   createEventBus,
   createLogger,
@@ -18,7 +20,6 @@ import {
   enqueueOutboxEvent,
   healthRoutes,
   optional,
-  registerServiceRateLimit,
   required,
   resolveProjectId,
   resolveTenantId,
@@ -39,9 +40,26 @@ let stopOutboxRelay: (() => void) | undefined;
 
 const app = Fastify({ logger: false, trustProxy: true });
 
-await registerServiceRateLimit(app, {
-  max: Number(optional("AS_RATE_LIMIT_MAX", "200")),
-  timeWindowMs: Number(optional("AS_RATE_LIMIT_WINDOW_MS", "60000")),
+const rateLimitMax = Number(optional("AS_RATE_LIMIT_MAX", "200"));
+const rateLimitWindowMs = Number(optional("AS_RATE_LIMIT_WINDOW_MS", "60000"));
+const ipLimiter = new RateLimiterMemory({
+  points: rateLimitMax,
+  duration: Math.max(1, Math.ceil(rateLimitWindowMs / 1000)),
+});
+
+await app.register(rateLimit, {
+  max: rateLimitMax,
+  timeWindow: rateLimitWindowMs,
+  addHeaders: {
+    "x-ratelimit-limit": true,
+    "x-ratelimit-remaining": true,
+    "x-ratelimit-reset": true,
+    "retry-after": true,
+  },
+  allowList: (req) => {
+    const path = req.url.split("?")[0] ?? req.url;
+    return path === "/healthz" || path === "/readyz";
+  },
 });
 
 app.register(healthRoutes);
@@ -51,7 +69,32 @@ app.setErrorHandler((err, _request, reply) => {
   reply.status(statusCode).send(body);
 });
 
+async function checkIpRateLimit(request: { ip?: string }, reply: { header: (k: string, v: string) => unknown; status: (n: number) => { send: (b: unknown) => unknown } }): Promise<boolean> {
+  try {
+    await ipLimiter.consume(String(request.ip || "unknown"));
+    return true;
+  } catch (rejection) {
+    const ms =
+      typeof rejection === "object" &&
+      rejection !== null &&
+      "msBeforeNext" in rejection &&
+      typeof (rejection as { msBeforeNext: unknown }).msBeforeNext === "number"
+        ? (rejection as { msBeforeNext: number }).msBeforeNext
+        : 1000;
+    const afterSeconds = Math.max(1, Math.ceil(ms / 1000));
+    reply.header("retry-after", String(afterSeconds));
+    reply.status(429).send({
+      error: {
+        code: "RATE_LIMITED",
+        message: `Rate limit exceeded. Retry after ${afterSeconds} seconds.`,
+      },
+    });
+    return false;
+  }
+}
+
 app.post("/v1/register", routeRateLimit({ max: 120 }), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const body = RegisterAgentRequestSchema.parse(request.body);
   const { card, baseUrl, weight } = body;
   const instanceId = body.instanceId ?? ulid();
@@ -193,6 +236,7 @@ app.post("/v1/register", routeRateLimit({ max: 120 }), async (request, reply) =>
 });
 
 app.post("/v1/heartbeat", routeRateLimit({ max: 600 }), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const body = HeartbeatRequestSchema.parse(request.body);
   const timestamp = body.timestamp ? new Date(body.timestamp) : new Date();
   const status = body.status ?? "HEALTHY";
@@ -253,6 +297,7 @@ app.post("/v1/heartbeat", routeRateLimit({ max: 600 }), async (request, reply) =
 });
 
 app.post("/v1/deregister", routeRateLimit({ max: 120 }), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const body = DeregisterAgentRequestSchema.parse(request.body);
   const deregisteredAt = new Date().toISOString();
 
@@ -325,7 +370,8 @@ app.post("/v1/deregister", routeRateLimit({ max: 120 }), async (request, reply) 
   return { ok: true };
 });
 
-app.get("/v1/tenants", routeRateLimit(), async () => {
+app.get("/v1/tenants", routeRateLimit(), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const result = await pool.query<{
     tenant_id: string;
     display_name: string;
@@ -380,6 +426,7 @@ app.get("/v1/tenants", routeRateLimit(), async () => {
 });
 
 app.post("/v1/tenants", routeRateLimit({ max: 30 }), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const body = CreateTenantRequestSchema.parse(request.body);
   const displayName = body.displayName?.trim() || body.tenantId;
 
@@ -425,6 +472,7 @@ app.post("/v1/tenants", routeRateLimit({ max: 30 }), async (request, reply) => {
 });
 
 app.get("/v1/tenants/:tenantId", routeRateLimit(), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const { tenantId } = request.params as { tenantId: string };
   TenantIdSchema.parse(tenantId);
 
@@ -472,6 +520,7 @@ app.get("/v1/tenants/:tenantId", routeRateLimit(), async (request, reply) => {
 });
 
 app.get("/v1/tenants/:tenantId/members", routeRateLimit(), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const { tenantId } = request.params as { tenantId: string };
   TenantIdSchema.parse(tenantId);
 
@@ -513,6 +562,7 @@ app.get("/v1/tenants/:tenantId/members", routeRateLimit(), async (request, reply
 });
 
 app.post("/v1/tenants/:tenantId/members", routeRateLimit({ max: 60 }), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const { tenantId } = request.params as { tenantId: string };
   TenantIdSchema.parse(tenantId);
   const body = InviteTenantMemberRequestSchema.parse(request.body);
@@ -551,7 +601,8 @@ app.post("/v1/tenants/:tenantId/members", routeRateLimit({ max: 60 }), async (re
   });
 });
 
-app.get("/v1/agents", routeRateLimit(), async (request) => {
+app.get("/v1/agents", routeRateLimit(), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const tenantId = resolveTenantId(request.headers);
   const projectId = resolveProjectId(request.headers);
   const result = await pool.query(
@@ -577,6 +628,7 @@ app.get("/v1/agents", routeRateLimit(), async (request) => {
 });
 
 app.get("/v1/agents/:instanceId", routeRateLimit(), async (request, reply) => {
+  if (!(await checkIpRateLimit(request, reply))) return;
   const { instanceId } = request.params as { instanceId: string };
   const tenantId = resolveTenantId(request.headers);
 

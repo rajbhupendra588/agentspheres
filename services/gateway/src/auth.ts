@@ -8,14 +8,7 @@ import {
 import { toErrorBody } from "@agentsphere/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
-import { RateLimiterMemory } from "rate-limiter-flexible";
 import { config } from "./config.js";
-
-/** Explicit auth-path limiter so authorization work is rate-limited (CWE-307/770). */
-const meshAuthLimiter = new RateLimiterMemory({
-  points: config.rateLimitMax,
-  duration: Math.max(1, Math.ceil(config.rateLimitWindowMs / 1000)),
-});
 
 const PUBLIC_MESH_PATHS = new Set([
   "/mesh/auth/v1/token",
@@ -82,19 +75,6 @@ export async function meshAuthHook(
   const path = req.url.split("?")[0] ?? req.url;
 
   if (!path.startsWith("/mesh/")) {
-    return;
-  }
-
-  try {
-    await meshAuthLimiter.consume(String(req.ip || "unknown"));
-  } catch {
-    const { statusCode, body } = toErrorBody(
-      Object.assign(new Error("Rate limit exceeded"), {
-        statusCode: 429,
-        code: "RATE_LIMITED",
-      }),
-    );
-    reply.status(statusCode).send(body);
     return;
   }
 

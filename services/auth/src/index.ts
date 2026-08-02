@@ -1,5 +1,7 @@
 import Fastify from "fastify";
 import jwt from "jsonwebtoken";
+import rateLimit from "@fastify/rate-limit";
+import { RateLimiterMemory } from "rate-limiter-flexible";
 import {
   JwtClaimsSchema,
   PORTS,
@@ -14,7 +16,6 @@ import {
   healthRoutes,
   optional,
   registerGracefulShutdown,
-  registerServiceRateLimit,
   resolveBootstrapSecret,
   resolveJwtSecret,
   routeRateLimit,
@@ -30,11 +31,28 @@ const gatewayOpen = envFlag("AS_GATEWAY_OPEN", false);
 const bootstrapSecret = resolveBootstrapSecret();
 const port = Number(process.env.PORT ?? PORTS.auth);
 
+const authRateLimitMax = Number(optional("AS_AUTH_RATE_LIMIT_MAX", "30"));
+const authRateLimitWindowMs = Number(optional("AS_AUTH_RATE_LIMIT_WINDOW_MS", "60000"));
+const ipLimiter = new RateLimiterMemory({
+  points: authRateLimitMax,
+  duration: Math.max(1, Math.ceil(authRateLimitWindowMs / 1000)),
+});
+
 const app = Fastify({ logger: false, trustProxy: true });
 
-await registerServiceRateLimit(app, {
-  max: Number(optional("AS_AUTH_RATE_LIMIT_MAX", "30")),
-  timeWindowMs: Number(optional("AS_AUTH_RATE_LIMIT_WINDOW_MS", "60000")),
+await app.register(rateLimit, {
+  max: authRateLimitMax,
+  timeWindow: authRateLimitWindowMs,
+  addHeaders: {
+    "x-ratelimit-limit": true,
+    "x-ratelimit-remaining": true,
+    "x-ratelimit-reset": true,
+    "retry-after": true,
+  },
+  allowList: (req) => {
+    const path = req.url.split("?")[0] ?? req.url;
+    return path === "/healthz" || path === "/readyz";
+  },
 });
 
 app.register(healthRoutes);
@@ -51,7 +69,6 @@ app.setErrorHandler((err, _request, reply) => {
 });
 
 function assertTokenMintAuthorized(request: { headers: Record<string, unknown> }): void {
-  // Open/local mode: allow unauthenticated minting for E2E convenience.
   if (gatewayOpen) {
     return;
   }
@@ -81,6 +98,15 @@ function assertTokenMintAuthorized(request: { headers: Record<string, unknown> }
 }
 
 app.post("/v1/token", routeRateLimit({ max: 30 }), async (request) => {
+  try {
+    await ipLimiter.consume(String(request.ip || "unknown"));
+  } catch {
+    throw Object.assign(new Error("Rate limit exceeded"), {
+      statusCode: 429,
+      code: "RATE_LIMITED",
+    });
+  }
+
   assertTokenMintAuthorized(request);
 
   const body = TokenRequestSchema.parse(request.body);
@@ -115,6 +141,18 @@ app.post("/v1/token", routeRateLimit({ max: 30 }), async (request) => {
 });
 
 app.get("/v1/introspect", routeRateLimit({ max: 60 }), async (request, reply) => {
+  try {
+    await ipLimiter.consume(String(request.ip || "unknown"));
+  } catch {
+    reply.status(429);
+    return {
+      error: {
+        code: "RATE_LIMITED",
+        message: "Rate limit exceeded",
+      },
+    };
+  }
+
   const header = request.headers.authorization;
   if (!header || header.slice(0, 7).toLowerCase() !== "bearer ") {
     reply.status(401);
@@ -169,4 +207,8 @@ app.get("/v1/introspect", routeRateLimit({ max: 60 }), async (request, reply) =>
 
 await app.listen({ port, host: "0.0.0.0" });
 registerGracefulShutdown("auth", app);
-log.info("auth service listening", { port, gatewayOpen, bootstrapRequired: !gatewayOpen || Boolean(bootstrapSecret) });
+log.info("auth service listening", {
+  port,
+  gatewayOpen,
+  bootstrapRequired: !gatewayOpen || Boolean(bootstrapSecret),
+});

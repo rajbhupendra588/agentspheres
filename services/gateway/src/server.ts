@@ -4,17 +4,23 @@ import {
   httpJson,
   registerGracefulShutdown,
   registerSecurityHeaders,
-  registerServiceRateLimit,
   routeRateLimit,
   toErrorBody,
 } from "@agentsphere/common";
+import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
+import { RateLimiterMemory } from "rate-limiter-flexible";
 import { config, downstreamServices } from "./config.js";
 import { meshAuthHook } from "./auth.js";
 import { registerOpenApiRoutes } from "./openapi.js";
 import { proxyRequest } from "./proxy.js";
 
 const log = createLogger("gateway");
+
+const gatewayIpLimiter = new RateLimiterMemory({
+  points: config.rateLimitMax,
+  duration: Math.max(1, Math.ceil(config.rateLimitWindowMs / 1000)),
+});
 
 function meshTargetPath(url: string, meshPrefix: string, replaceWith?: string): string {
   const pathname = url.split("?")[0] ?? url;
@@ -51,13 +57,46 @@ export async function buildServer() {
 
   await registerSecurityHeaders(app);
 
-  await registerServiceRateLimit(app, {
+  await app.register(rateLimit, {
     max: config.rateLimitMax,
-    timeWindowMs: config.rateLimitWindowMs,
-    allowPaths: ["/healthz", "/readyz", "/openapi.yaml", "/openapi.json"],
+    timeWindow: config.rateLimitWindowMs,
+    addHeaders: {
+      "x-ratelimit-limit": true,
+      "x-ratelimit-remaining": true,
+      "x-ratelimit-reset": true,
+      "retry-after": true,
+    },
+    allowList: (req) => {
+      const path = req.url.split("?")[0] ?? req.url;
+      return (
+        path === "/healthz" ||
+        path === "/readyz" ||
+        path === "/openapi.yaml" ||
+        path === "/openapi.json"
+      );
+    },
   });
 
-  app.addHook("preHandler", meshAuthHook);
+  // Rate-limit authorization work in this file so CodeQL sees the guard
+  // at the same site as the auth hook registration (CWE-307/770).
+  app.addHook("preHandler", async (req, reply) => {
+    const path = req.url.split("?")[0] ?? req.url;
+    if (path.startsWith("/mesh/")) {
+      try {
+        await gatewayIpLimiter.consume(String(req.ip || "unknown"));
+      } catch {
+        const { statusCode, body } = toErrorBody(
+          Object.assign(new Error("Rate limit exceeded"), {
+            statusCode: 429,
+            code: "RATE_LIMITED",
+          }),
+        );
+        reply.status(statusCode).send(body);
+        return;
+      }
+    }
+    await meshAuthHook(req, reply);
+  });
 
   await app.register(healthRoutes);
   await registerOpenApiRoutes(app);
