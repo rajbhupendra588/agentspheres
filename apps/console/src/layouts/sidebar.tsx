@@ -1,8 +1,9 @@
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { NAV_SECTIONS } from "@/constants/navigation";
 import { getNavIcon } from "@/constants/nav-icons";
+import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -23,21 +24,25 @@ export function Sidebar() {
         className="relative flex h-full shrink-0 flex-col border-r border-border bg-background/80 backdrop-blur-md"
       >
         <div className="flex h-14 items-center gap-3 border-b border-border px-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-            AS
-          </div>
-          {!collapsed && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="min-w-0"
-            >
-              <p className="font-brand truncate text-sm font-semibold leading-tight">AgentSphere</p>
-              <p className="truncate text-[10px] uppercase tracking-widest text-muted-foreground">
-                Console
-              </p>
-            </motion.div>
-          )}
+          <Link
+            to="/"
+            className="flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="AgentSphere home"
+          >
+            <BrandLogo size={36} />
+            {!collapsed && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="min-w-0"
+              >
+                <p className="font-brand truncate text-sm font-semibold leading-tight">AgentSphere</p>
+                <p className="truncate text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Console
+                </p>
+              </motion.div>
+            )}
+          </Link>
         </div>
 
         <ScrollArea className="flex-1 py-3">

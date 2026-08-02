@@ -34,6 +34,27 @@ const app = Fastify({ logger: false, trustProxy: true });
 await app.register(rateLimit, {
   max: Number(optional("AS_AUTH_RATE_LIMIT_MAX", "30")),
   timeWindow: Number(optional("AS_AUTH_RATE_LIMIT_WINDOW_MS", "60000")),
+  addHeadersOnExceeding: {
+    "x-ratelimit-limit": true,
+    "x-ratelimit-remaining": true,
+    "x-ratelimit-reset": true,
+  },
+  addHeaders: {
+    "x-ratelimit-limit": true,
+    "x-ratelimit-remaining": true,
+    "x-ratelimit-reset": true,
+    "retry-after": true,
+  },
+  errorResponseBuilder: (_request, context) => {
+    const afterSeconds = Math.max(1, Math.ceil(context.ttl / 1000));
+    return Object.assign(
+      new Error(`Rate limit exceeded. Retry after ${afterSeconds} seconds.`),
+      {
+        statusCode: context.statusCode,
+        code: "RATE_LIMITED",
+      },
+    );
+  },
 });
 
 app.register(healthRoutes);

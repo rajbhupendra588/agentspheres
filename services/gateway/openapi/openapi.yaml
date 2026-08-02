@@ -1,0 +1,2128 @@
+openapi: 3.1.0
+info:
+  title: AgentSphere Gateway API
+  version: 0.1.0
+  summary: Client-facing AI Agent Service Mesh API
+  license:
+    name: UNLICENSED
+  contact:
+    name: AgentSphere Platform
+  description: |
+    Production client contract for applications that **consume** or **operate** the AgentSphere mesh
+    through the edge Gateway.
+
+    ## Base URL
+    All client traffic goes through the Gateway (default `http://localhost:8080`).
+    Mesh APIs are under `/mesh/{service}/v1/...`.
+
+    ## Authentication
+    - **Locked mode** (`AS_GATEWAY_OPEN=false`, production default): send
+      `Authorization: Bearer <jwt>` on every protected route.
+    - **Open mode** (local E2E): Bearer optional; tenant may be supplied via `x-tenant-id`.
+    - Mint tokens: `POST /mesh/auth/v1/token`. In locked mode also send
+      `x-agentsphere-bootstrap: <AS_BOOTSTRAP_SECRET>` (server-side only — never from browsers).
+    - JWT claims (`tenantId`, optional `projectId`) **overwrite** client tenant headers.
+
+    ## Multi-tenant consistency
+    - Hard isolation key: `tenantId` (header `x-tenant-id` or JWT claim).
+    - Optional scope: `projectId` (`x-project-id`).
+    - Agents, discovery, invoke, workflows, and memory are tenant-scoped.
+    - Registry register requires an **active** tenant; card `metadata.tenantId` must match request tenant.
+    - Clients must treat cross-tenant access as forbidden (`TENANT_MISMATCH` / `TENANT_FORBIDDEN`).
+
+    ## Error model
+    Errors are always JSON (not `problem+json`):
+
+    ```json
+    { "error": { "code": "STRING_CODE", "message": "human readable", "details": {} } }
+    ```
+
+    5xx `message` values are sanitized and never leak internals.
+
+    ## Rate limiting
+    - Gateway default: **200 requests / 60s** per client IP (`AS_RATE_LIMIT_MAX`, `AS_RATE_LIMIT_WINDOW_MS`).
+    - Auth token mint is tighter (default **30 / 60s**).
+    - Health probes `/healthz` and `/readyz` are exempt at the gateway.
+    - On exceed: **429** with `Retry-After` and `x-ratelimit-*` headers.
+
+    ## Resiliency (client guidance)
+    | Concern | Guidance |
+    | --- | --- |
+    | Timeouts | Set client timeouts ≥ invoke `timeoutMs` (default agent budgets often 30s). Gateway upstream proxy timeout default **60s**. |
+    | Retries | Retry **safe/idempotent** reads and heartbeats on `502/503/504` and `429` with exponential backoff + jitter. Honor `Retry-After`. |
+    | Idempotency | Prefer stable `instanceId` on register; send `x-correlation-id` / body `correlationId` for invoke tracing. |
+    | Availability | Poll `GET /mesh/health` (aggregate) and `GET /readyz` (process). Prefer `degraded` handling over hard-fail when non-critical services are down. |
+    | Consistency | Discovery may lag registry by a short cache TTL (~5s). After register, allow brief settle or retry discover. |
+    | Partial failure | Workflow runs return `status: FAILED` with step errors rather than always throwing HTTP 5xx. |
+
+    ## Availability
+    - `GET /healthz` — process liveness
+    - `GET /readyz` — process readiness
+    - `GET /mesh/health` — mesh aggregate (`ok` \| `degraded`)
+
+    ## SSE
+    `GET /mesh/notify/v1/events` streams `text/event-stream`. Browsers cannot attach Bearer tokens to `EventSource`;
+    use a same-origin proxy (Console) or open/locked gateway with cookie/proxy auth in front.
+servers:
+  - url: http://localhost:8080
+    description: Local Gateway
+  - url: "{gatewayBaseUrl}"
+    description: Deployed Gateway
+    variables:
+      gatewayBaseUrl:
+        default: https://agentsphere.example.com
+tags:
+  - name: Meta
+    description: Gateway identity, OpenAPI, liveness
+  - name: Health
+    description: Availability probes
+  - name: Auth
+    description: Token mint and introspection
+  - name: Tenants
+    description: Tenant administration
+  - name: Registry
+    description: Agent registration lifecycle
+  - name: Discovery
+    description: Capability-based instance lookup
+  - name: Runtime
+    description: Synchronous A2A invoke
+  - name: Workflows
+    description: Multi-agent orchestration
+  - name: Tools
+    description: Tool registry and execution
+  - name: Memory
+    description: Scoped agent memory
+  - name: Events
+    description: Live event stream and publish
+security:
+  - bearerAuth: []
+  - tenantHeader: []
+paths:
+  /:
+    get:
+      tags: [Meta]
+      operationId: getGatewayInfo
+      summary: Gateway identity
+      security: []
+      responses:
+        "200":
+          description: Gateway metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayInfo"
+
+  /openapi.yaml:
+    get:
+      tags: [Meta]
+      operationId: getOpenApiYaml
+      summary: Download OpenAPI specification (YAML)
+      security: []
+      responses:
+        "200":
+          description: OpenAPI 3.1 document
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /openapi.json:
+    get:
+      tags: [Meta]
+      operationId: getOpenApiJson
+      summary: OpenAPI document metadata / pointer
+      description: Returns JSON metadata including the canonical YAML URL for generators that prefer JSON discovery.
+      security: []
+      responses:
+        "200":
+          description: OpenAPI discovery document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenApiDiscovery"
+
+  /healthz:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeStatus"
+
+  /readyz:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Readiness probe
+      security: []
+      responses:
+        "200":
+          description: Process is ready to accept traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeStatus"
+
+  /mesh/health:
+    get:
+      tags: [Health]
+      operationId: getMeshHealth
+      summary: Aggregate mesh health
+      security: []
+      responses:
+        "200":
+          description: Aggregate status across control/data plane services
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeshHealth"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /mesh/auth/v1/token:
+    post:
+      tags: [Auth]
+      operationId: mintToken
+      summary: Mint tenant-scoped JWT
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/BootstrapHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+            examples:
+              developer:
+                value:
+                  subject: ops@acme.example
+                  role: developer
+                  tenantId: acme
+                  projectId: checkout
+      responses:
+        "200":
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: Bootstrap secret not configured in locked mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                bootstrapMissing:
+                  value:
+                    error:
+                      code: BOOTSTRAP_NOT_CONFIGURED
+                      message: AS_BOOTSTRAP_SECRET is required to mint tokens in locked mode
+
+  /mesh/auth/v1/introspect:
+    get:
+      tags: [Auth]
+      operationId: introspectToken
+      summary: Introspect Bearer token
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Introspection result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenIntrospectResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/registry/v1/tenants:
+    get:
+      tags: [Tenants]
+      operationId: listTenants
+      summary: List tenants
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Tenant catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantsListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      tags: [Tenants]
+      operationId: createTenant
+      summary: Create tenant
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantRecord"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Tenant already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                exists:
+                  value:
+                    error:
+                      code: TENANT_EXISTS
+                      message: "Tenant already exists: acme"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/registry/v1/tenants/{tenantId}:
+    get:
+      tags: [Tenants]
+      operationId: getTenant
+      summary: Get tenant by id
+      parameters:
+        - $ref: "#/components/parameters/TenantIdPath"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Tenant record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantRecord"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/registry/v1/tenants/{tenantId}/members:
+    get:
+      tags: [Tenants]
+      operationId: listTenantMembers
+      summary: List tenant members
+      parameters:
+        - $ref: "#/components/parameters/TenantIdPath"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantMembersResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      tags: [Tenants]
+      operationId: inviteTenantMember
+      summary: Invite / upsert tenant member
+      parameters:
+        - $ref: "#/components/parameters/TenantIdPath"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteTenantMemberRequest"
+      responses:
+        "201":
+          description: Member invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantMember"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/registry/v1/register:
+    post:
+      tags: [Registry]
+      operationId: registerAgent
+      summary: Register or update agent instance
+      description: |
+        Idempotent when the same `instanceId` is reused. Creates with **201**, updates with **200**.
+        Agent card `metadata.tenantId` must match the authenticated tenant and refer to an **active** tenant.
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/ProjectHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterAgentRequest"
+      responses:
+        "200":
+          description: Existing instance updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterAgentResponse"
+        "201":
+          description: New instance registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterAgentResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+
+  /mesh/registry/v1/heartbeat:
+    post:
+      tags: [Registry]
+      operationId: heartbeatAgent
+      summary: Heartbeat agent instance
+      description: Safe to retry. Missed heartbeats eventually mark instances unhealthy / evicted.
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeartbeatRequest"
+      responses:
+        "200":
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/registry/v1/deregister:
+    post:
+      tags: [Registry]
+      operationId: deregisterAgent
+      summary: Deregister agent instance
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeregisterAgentRequest"
+      responses:
+        "200":
+          description: Deregistered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/registry/v1/agents:
+    get:
+      tags: [Registry]
+      operationId: listAgents
+      summary: List agents for active tenant
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/ProjectHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Tenant-scoped agent instances
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentsListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/registry/v1/agents/{instanceId}:
+    get:
+      tags: [Registry]
+      operationId: getAgent
+      summary: Get agent instance
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Agent instance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentInstance"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/discovery/v1/discover:
+    get:
+      tags: [Discovery]
+      operationId: discoverAgentsGet
+      summary: Discover healthy instances (query)
+      description: |
+        Returns tenant-scoped healthy/draining instances for a capability.
+        Results may be briefly stale relative to registry (short cache TTL). Retry on empty after register.
+      parameters:
+        - name: capability
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          example: research.web
+        - name: version
+          in: query
+          schema:
+            type: string
+        - name: tenant
+          in: query
+          schema:
+            $ref: "#/components/schemas/TenantId"
+        - name: projectId
+          in: query
+          schema:
+            $ref: "#/components/schemas/ProjectId"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/ProjectHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Discovery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      tags: [Discovery]
+      operationId: discoverAgentsPost
+      summary: Discover healthy instances (body)
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/ProjectHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscoveryQuery"
+      responses:
+        "200":
+          description: Discovery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/runtime/v1/invoke:
+    post:
+      tags: [Runtime]
+      operationId: invokeCapability
+      summary: Invoke an agent by capability
+      description: |
+        Discovers a healthy instance in the caller tenant and invokes it.
+        Not automatically safe to retry unless your agent handler is idempotent — use `correlationId` for dedupe at the app layer.
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/ProjectHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvokeRequest"
+            examples:
+              research:
+                value:
+                  capability: research.web
+                  input:
+                    topic: AgentSphere mesh
+                  timeoutMs: 30000
+                  correlationId: 01HXEXAMPLECORRELATIONID
+                  sessionId: sess-123
+      responses:
+        "200":
+          description: Invoke succeeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvokeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No healthy instance for capability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                unavailable:
+                  value:
+                    error:
+                      code: CAPABILITY_UNAVAILABLE
+                      message: No healthy agent for capability research.web
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          description: Downstream agent invoke failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                agentFailed:
+                  value:
+                    error:
+                      code: AGENT_INVOKE_FAILED
+                      message: Agent invoke failed
+                      details: {}
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+
+  /mesh/runtime/v1/capabilities:
+    get:
+      tags: [Runtime]
+      operationId: listRuntimeCapabilities
+      summary: List discoverable capabilities (runtime view)
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Capability catalog snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilitiesResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/workflow/v1/workflows/research-synthesize:
+    post:
+      tags: [Workflows]
+      operationId: startResearchSynthesize
+      summary: Start research → synthesize workflow
+      description: |
+        Returns a run envelope. Failures are often signaled via `status: FAILED` on **200**
+        rather than only via HTTP errors — always inspect `status` and `steps`.
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/ProjectHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchSynthesizeRequest"
+      responses:
+        "200":
+          description: Workflow accepted / completed envelope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRun"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+
+  /mesh/workflow/v1/workflows:
+    get:
+      tags: [Workflows]
+      operationId: listWorkflows
+      summary: List workflow runs
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Workflow runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowsListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/workflow/v1/workflows/{runId}:
+    get:
+      tags: [Workflows]
+      operationId: getWorkflow
+      summary: Get workflow run
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Workflow run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRun"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/tools/v1/tools:
+    get:
+      tags: [Tools]
+      operationId: listTools
+      summary: List registered tools
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Tools
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolsListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      tags: [Tools]
+      operationId: registerTool
+      summary: Register a tool definition
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolDefinition"
+      responses:
+        "200":
+          description: Tool registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterToolResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/tools/v1/execute:
+    post:
+      tags: [Tools]
+      operationId: executeTool
+      summary: Execute a tool
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToolExecuteRequest"
+      responses:
+        "200":
+          description: Tool result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolExecuteResponse"
+        "404":
+          description: Tool not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+              examples:
+                missing:
+                  value:
+                    error:
+                      code: TOOL_NOT_FOUND
+                      message: Tool not found
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/memory/v1/memory:
+    put:
+      tags: [Memory]
+      operationId: setMemory
+      summary: Upsert memory record
+      description: |
+        Strong consistency within the memory service for a given key/scope/tenant.
+        Body `tenantId` must match request tenant or the call fails with `TENANT_MISMATCH`.
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/ProjectHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemorySetRequest"
+      responses:
+        "200":
+          description: Memory stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryRecord"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/memory/v1/memory/get:
+    post:
+      tags: [Memory]
+      operationId: getMemory
+      summary: Get memory record
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryGetRequest"
+      responses:
+        "200":
+          description: Record found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryGetResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/memory/v1/memory/search:
+    post:
+      tags: [Memory]
+      operationId: searchMemory
+      summary: Search memory records
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemorySearchRequest"
+      responses:
+        "200":
+          description: Search hits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemorySearchResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /mesh/notify/v1/events:
+    get:
+      tags: [Events]
+      operationId: streamEvents
+      summary: Subscribe to live mesh events (SSE)
+      description: |
+        Server-Sent Events stream. Initial comment `: connected <clientId>`.
+        Each event line is `data: {json}` where JSON matches `SseEvent`.
+      parameters:
+        - $ref: "#/components/parameters/TenantHeader"
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE byte stream of SseEvent payloads
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /mesh/notify/v1/publish:
+    post:
+      tags: [Events]
+      operationId: publishEvent
+      summary: Publish event to SSE subscribers
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRequest"
+      responses:
+        "200":
+          description: Published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Tenant-scoped AgentSphere JWT from POST /mesh/auth/v1/token
+    tenantHeader:
+      type: apiKey
+      in: header
+      name: x-tenant-id
+      description: Tenant isolation key (JWT claim wins when Bearer present)
+    bootstrapAuth:
+      type: apiKey
+      in: header
+      name: x-agentsphere-bootstrap
+      description: Server-side bootstrap secret for token mint in locked mode
+
+  parameters:
+    TenantHeader:
+      name: x-tenant-id
+      in: header
+      required: false
+      schema:
+        $ref: "#/components/schemas/TenantId"
+      description: Tenant id; defaults to `default` in open mode. Overridden by JWT.
+    ProjectHeader:
+      name: x-project-id
+      in: header
+      required: false
+      schema:
+        $ref: "#/components/schemas/ProjectId"
+    BootstrapHeader:
+      name: x-agentsphere-bootstrap
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Required for token mint when gateway is locked
+    CorrelationIdHeader:
+      name: x-correlation-id
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: End-to-end correlation id for tracing; echoed when supported
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 128
+      description: |
+        Client-supplied idempotency key for safe retries on register.
+        Prefer a stable `instanceId` in the body as the primary idempotency mechanism.
+    TenantIdPath:
+      name: tenantId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/TenantId"
+
+  headers:
+    XRateLimitLimit:
+      description: Requests allowed in the current window
+      schema:
+        type: integer
+    XRateLimitRemaining:
+      description: Remaining requests in the current window
+      schema:
+        type: integer
+    XRateLimitReset:
+      description: Seconds until the window resets
+      schema:
+        type: integer
+    RetryAfter:
+      description: Seconds to wait before retrying (on 429)
+      schema:
+        type: integer
+    XCorrelationId:
+      description: Echo of request correlation id when provided
+      schema:
+        type: string
+
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            validation:
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: Request validation failed
+                  details:
+                    formErrors: []
+                    fieldErrors:
+                      tenantId:
+                        - Required
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            unauthorized:
+              value:
+                error:
+                  code: UNAUTHORIZED
+                  message: Missing Bearer token
+    Forbidden:
+      description: Authenticated but not allowed for this tenant/resource
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            mismatch:
+              value:
+                error:
+                  code: TENANT_MISMATCH
+                  message: Tenant mismatch
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            notFound:
+              value:
+                error:
+                  code: NOT_FOUND
+                  message: Not found
+    RateLimited:
+      description: Rate limit exceeded — back off using Retry-After
+      headers:
+        x-ratelimit-limit:
+          $ref: "#/components/headers/XRateLimitLimit"
+        x-ratelimit-remaining:
+          $ref: "#/components/headers/XRateLimitRemaining"
+        x-ratelimit-reset:
+          $ref: "#/components/headers/XRateLimitReset"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+        x-correlation-id:
+          $ref: "#/components/headers/XCorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            limited:
+              value:
+                error:
+                  code: RATE_LIMITED
+                  message: Rate limit exceeded. Retry after 12 seconds.
+                  details:
+                    max: 200
+                    afterSeconds: 12
+    BadGateway:
+      description: Upstream mesh service unreachable or returned an invalid response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            badGateway:
+              value:
+                error:
+                  code: BAD_GATEWAY
+                  message: Upstream service unavailable
+    GatewayTimeout:
+      description: Upstream proxy timeout
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            timeout:
+              value:
+                error:
+                  code: GATEWAY_TIMEOUT
+                  message: Upstream request timed out
+    InternalError:
+      description: Unexpected server error (message sanitized)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+          examples:
+            internal:
+              value:
+                error:
+                  code: INTERNAL_ERROR
+                  message: An unexpected error occurred
+
+  schemas:
+    TenantId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+      example: acme
+
+    ProjectId:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+      example: checkout
+
+    MeshRole:
+      type: string
+      enum: [admin, developer, agent, viewer]
+
+    ApiErrorBody:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          description: Stable machine code (e.g. VALIDATION_ERROR, RATE_LIMITED)
+        message:
+          type: string
+        details:
+          description: Optional structured details (validation flatten, upstream body, etc.)
+
+    ApiError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          $ref: "#/components/schemas/ApiErrorBody"
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+    GatewayInfo:
+      type: object
+      required: [name, version, mode]
+      properties:
+        name:
+          type: string
+          example: AgentSphere Gateway
+        version:
+          type: string
+          example: "0.1.0"
+        mode:
+          type: string
+          enum: [open, locked]
+
+    OpenApiDiscovery:
+      type: object
+      required: [openapi, version, yamlUrl, jsonUrl]
+      properties:
+        openapi:
+          type: string
+          example: "3.1.0"
+        version:
+          type: string
+          example: "0.1.0"
+        title:
+          type: string
+        yamlUrl:
+          type: string
+          format: uri
+          example: /openapi.yaml
+        jsonUrl:
+          type: string
+          format: uri
+          example: /openapi.json
+        errorModel:
+          type: string
+          example: "{ error: { code, message, details? } }"
+        rateLimit:
+          type: object
+          properties:
+            defaultMax:
+              type: integer
+              example: 200
+            windowMs:
+              type: integer
+              example: 60000
+            headers:
+              type: array
+              items:
+                type: string
+              example: [x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, Retry-After]
+
+    ProbeStatus:
+      type: object
+      required: [status, ts]
+      properties:
+        status:
+          type: string
+          enum: [ok, ready]
+        ts:
+          type: string
+          format: date-time
+
+    MeshHealthService:
+      type: object
+      required: [name, url, status]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [ok, error]
+        detail: {}
+
+    MeshHealth:
+      type: object
+      required: [status, ts, services]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        ts:
+          type: string
+          format: date-time
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/MeshHealthService"
+
+    TokenRequest:
+      type: object
+      required: [subject, tenantId]
+      additionalProperties: false
+      properties:
+        subject:
+          type: string
+          minLength: 1
+        role:
+          $ref: "#/components/schemas/MeshRole"
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+
+    TokenResponse:
+      type: object
+      required: [accessToken, expiresIn, tokenType, tenantId, role, subject]
+      properties:
+        accessToken:
+          type: string
+        expiresIn:
+          type: integer
+          minimum: 1
+          example: 3600
+        tokenType:
+          type: string
+          const: Bearer
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        role:
+          $ref: "#/components/schemas/MeshRole"
+        subject:
+          type: string
+
+    TokenIntrospectResponse:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: boolean
+        subject:
+          type: string
+        role:
+          $ref: "#/components/schemas/MeshRole"
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        exp:
+          type: integer
+
+    TenantStatus:
+      type: string
+      enum: [active, suspended]
+
+    TenantRecord:
+      type: object
+      required: [tenantId, displayName, status, createdAt, updatedAt]
+      properties:
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        displayName:
+          type: string
+        status:
+          $ref: "#/components/schemas/TenantStatus"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        agentCount:
+          type: integer
+          minimum: 0
+        memberCount:
+          type: integer
+          minimum: 0
+
+    CreateTenantRequest:
+      type: object
+      required: [tenantId]
+      properties:
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    TenantsListResponse:
+      type: object
+      required: [tenants, tenantIds, count]
+      properties:
+        tenants:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantRecord"
+        tenantIds:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantId"
+        count:
+          type: integer
+          minimum: 0
+
+    TenantMember:
+      type: object
+      required: [subject, role, tenantId, createdAt]
+      properties:
+        subject:
+          type: string
+        role:
+          $ref: "#/components/schemas/MeshRole"
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        createdAt:
+          type: string
+          format: date-time
+
+    InviteTenantMemberRequest:
+      type: object
+      required: [subject]
+      properties:
+        subject:
+          type: string
+          minLength: 1
+        role:
+          $ref: "#/components/schemas/MeshRole"
+
+    TenantMembersResponse:
+      type: object
+      required: [tenantId, members, count]
+      properties:
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantMember"
+        count:
+          type: integer
+          minimum: 0
+
+    AgentCardMetadata:
+      type: object
+      required: [name, version, owner, tenantId]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        owner:
+          type: string
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+
+    AgentCardSpec:
+      type: object
+      required: [capabilities, inputSchema, outputSchema, endpoints, resources, tools]
+      properties:
+        capabilities:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        inputSchema:
+          type: object
+          additionalProperties: true
+        outputSchema:
+          type: object
+          additionalProperties: true
+        endpoints:
+          type: object
+          required: [invoke]
+          properties:
+            invoke:
+              type: string
+              example: /v1/invoke
+        resources:
+          type: object
+          required: [timeoutMs]
+          properties:
+            timeoutMs:
+              type: integer
+              minimum: 1
+        tools:
+          type: array
+          items:
+            type: string
+
+    AgentCard:
+      type: object
+      required: [apiVersion, kind, metadata, spec]
+      properties:
+        apiVersion:
+          type: string
+          const: agentsphere.io/v1
+        kind:
+          type: string
+          const: AgentCard
+        metadata:
+          $ref: "#/components/schemas/AgentCardMetadata"
+        spec:
+          $ref: "#/components/schemas/AgentCardSpec"
+
+    RegisterAgentRequest:
+      type: object
+      required: [card, baseUrl]
+      properties:
+        card:
+          $ref: "#/components/schemas/AgentCard"
+        baseUrl:
+          type: string
+          format: uri
+        instanceId:
+          type: string
+          description: Stable id for idempotent re-registration
+        weight:
+          type: integer
+          minimum: 1
+
+    RegisterAgentResponse:
+      type: object
+      required: [instanceId, agentName, version, status, registeredAt]
+      properties:
+        instanceId:
+          type: string
+        agentName:
+          type: string
+        version:
+          type: string
+        status:
+          type: string
+          enum: [REGISTERED, UPDATED]
+        registeredAt:
+          type: string
+          format: date-time
+
+    HeartbeatRequest:
+      type: object
+      required: [instanceId]
+      properties:
+        instanceId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [HEALTHY, DRAINING]
+
+    DeregisterAgentRequest:
+      type: object
+      required: [instanceId]
+      properties:
+        instanceId:
+          type: string
+        reason:
+          type: string
+
+    AgentInstance:
+      type: object
+      required:
+        - instanceId
+        - agentName
+        - version
+        - owner
+        - tenantId
+        - baseUrl
+        - capabilities
+        - weight
+        - status
+        - card
+        - lastHeartbeat
+        - createdAt
+        - updatedAt
+      properties:
+        instanceId:
+          type: string
+        agentName:
+          type: string
+        version:
+          type: string
+        owner:
+          type: string
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        baseUrl:
+          type: string
+          format: uri
+        capabilities:
+          type: array
+          items:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        weight:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [HEALTHY, UNHEALTHY, DRAINING]
+        card:
+          $ref: "#/components/schemas/AgentCard"
+        lastHeartbeat:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    AgentsListResponse:
+      type: object
+      required: [tenantId, agents, count]
+      properties:
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentInstance"
+        count:
+          type: integer
+          minimum: 0
+
+    DiscoveryQuery:
+      type: object
+      required: [capability]
+      properties:
+        capability:
+          type: string
+          minLength: 1
+        version:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        tenant:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        limit:
+          type: integer
+          minimum: 1
+
+    DiscoveryInstance:
+      type: object
+      required:
+        - instanceId
+        - agentName
+        - version
+        - baseUrl
+        - capabilities
+        - weight
+        - status
+        - tenantId
+      properties:
+        instanceId:
+          type: string
+        agentName:
+          type: string
+        version:
+          type: string
+        baseUrl:
+          type: string
+          format: uri
+        capabilities:
+          type: array
+          items:
+            type: string
+        weight:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum: [HEALTHY, UNHEALTHY, DRAINING]
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+
+    DiscoveryResult:
+      type: object
+      required: [capability, instances, resolvedAt]
+      properties:
+        capability:
+          type: string
+        instances:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiscoveryInstance"
+        resolvedAt:
+          type: string
+          format: date-time
+
+    InvokeRequest:
+      type: object
+      required: [capability, input]
+      properties:
+        capability:
+          type: string
+          minLength: 1
+        input: {}
+        timeoutMs:
+          type: integer
+          minimum: 1
+        correlationId:
+          type: string
+        sessionId:
+          type: string
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+
+    InvokeResponse:
+      type: object
+      required: [output, agentName, instanceId, latencyMs]
+      properties:
+        output: {}
+        agentName:
+          type: string
+        instanceId:
+          type: string
+        latencyMs:
+          type: number
+          minimum: 0
+        correlationId:
+          type: string
+
+    CapabilitiesResponse:
+      type: object
+      required: [capabilities, count, resolvedAt]
+      properties:
+        capabilities:
+          type: array
+          items:
+            type: string
+        count:
+          type: integer
+          minimum: 0
+        resolvedAt:
+          type: string
+          format: date-time
+
+    WorkflowStepStatus:
+      type: string
+      enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+
+    WorkflowRunStatus:
+      type: string
+      enum: [RUNNING, SUCCEEDED, FAILED]
+
+    WorkflowStep:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          $ref: "#/components/schemas/WorkflowStepStatus"
+        output: {}
+        error:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    WorkflowRun:
+      type: object
+      required: [runId, workflowType, status, steps, createdAt, updatedAt]
+      properties:
+        runId:
+          type: string
+        workflowType:
+          type: string
+        status:
+          $ref: "#/components/schemas/WorkflowRunStatus"
+        topic:
+          type: string
+        sessionId:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStep"
+        result: {}
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ResearchSynthesizeRequest:
+      type: object
+      required: [topic]
+      properties:
+        topic:
+          type: string
+          minLength: 1
+        sessionId:
+          type: string
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+
+    WorkflowsListResponse:
+      type: object
+      required: [workflows]
+      properties:
+        workflows:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowRun"
+
+    ToolDefinition:
+      type: object
+      required: [name, inputSchema]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        version:
+          type: string
+        inputSchema:
+          type: object
+          additionalProperties: true
+        outputSchema:
+          type: object
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            type: string
+
+    ToolsListResponse:
+      type: object
+      required: [tools, count]
+      properties:
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolDefinition"
+        count:
+          type: integer
+          minimum: 0
+
+    RegisterToolResponse:
+      type: object
+      required: [tool, status]
+      properties:
+        tool:
+          $ref: "#/components/schemas/ToolDefinition"
+        status:
+          type: string
+          const: REGISTERED
+
+    ToolExecuteRequest:
+      type: object
+      required: [tool, input]
+      properties:
+        tool:
+          type: string
+          minLength: 1
+        input: {}
+        agentName:
+          type: string
+        correlationId:
+          type: string
+
+    ToolExecuteResponse:
+      type: object
+      required: [output, tool, latencyMs]
+      properties:
+        output: {}
+        tool:
+          type: string
+        latencyMs:
+          type: number
+          minimum: 0
+
+    MemoryScope:
+      type: string
+      enum: [session, agent, workspace]
+
+    MemoryRecord:
+      type: object
+      required: [key, value, scope, tenantId]
+      properties:
+        key:
+          type: string
+          minLength: 1
+        value: {}
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        sessionId:
+          type: string
+        agentName:
+          type: string
+        workspaceId:
+          type: string
+        embedding:
+          type: array
+          items:
+            type: number
+        ttlSeconds:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    MemorySetRequest:
+      type: object
+      required: [key, value, scope, tenantId]
+      properties:
+        key:
+          type: string
+          minLength: 1
+        value: {}
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        sessionId:
+          type: string
+        agentName:
+          type: string
+        workspaceId:
+          type: string
+        embedding:
+          type: array
+          items:
+            type: number
+        ttlSeconds:
+          type: integer
+          minimum: 1
+
+    MemoryGetRequest:
+      type: object
+      required: [key, scope]
+      properties:
+        key:
+          type: string
+          minLength: 1
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        sessionId:
+          type: string
+        agentName:
+          type: string
+        workspaceId:
+          type: string
+
+    MemoryGetResponse:
+      type: object
+      required: [record]
+      properties:
+        record:
+          $ref: "#/components/schemas/MemoryRecord"
+
+    MemorySearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+        scope:
+          $ref: "#/components/schemas/MemoryScope"
+        tenantId:
+          $ref: "#/components/schemas/TenantId"
+        projectId:
+          $ref: "#/components/schemas/ProjectId"
+        workspaceId:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+
+    MemorySearchResponse:
+      type: object
+      required: [records, count, query]
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryRecord"
+        count:
+          type: integer
+          minimum: 0
+        query:
+          type: string
+
+    PublishRequest:
+      type: object
+      required: [type, payload]
+      properties:
+        type:
+          type: string
+          minLength: 1
+        payload: {}
+
+    PublishResponse:
+      type: object
+      required: [published, delivered, clients]
+      properties:
+        published:
+          type: boolean
+          const: true
+        delivered:
+          type: integer
+          minimum: 0
+        clients:
+          type: integer
+          minimum: 0
+
+    SseEvent:
+      type: object
+      required: [type, payload, ts]
+      properties:
+        type:
+          type: string
+        payload: {}
+        ts:
+          type: string
+          format: date-time

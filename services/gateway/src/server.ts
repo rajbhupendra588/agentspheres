@@ -10,6 +10,7 @@ import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import { config, downstreamServices } from "./config.js";
 import { meshAuthHook } from "./auth.js";
+import { registerOpenApiRoutes } from "./openapi.js";
 import { proxyRequest } from "./proxy.js";
 
 const log = createLogger("gateway");
@@ -31,12 +32,17 @@ export async function buildServer() {
     bodyLimit: 1_048_576,
   });
 
-  app.setErrorHandler((err, _req, reply) => {
+  app.setErrorHandler((err, req, reply) => {
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
       log.error("request failed", {
         error: err instanceof Error ? err.message : String(err),
+        path: req.url,
       });
+    }
+    const correlation = req.headers["x-correlation-id"];
+    if (typeof correlation === "string" && correlation.trim()) {
+      reply.header("x-correlation-id", correlation.trim());
     }
     const { statusCode, body } = toErrorBody(err);
     reply.status(statusCode).send(body);
@@ -47,20 +53,48 @@ export async function buildServer() {
   await app.register(rateLimit, {
     max: config.rateLimitMax,
     timeWindow: config.rateLimitWindowMs,
+    addHeadersOnExceeding: {
+      "x-ratelimit-limit": true,
+      "x-ratelimit-remaining": true,
+      "x-ratelimit-reset": true,
+    },
+    addHeaders: {
+      "x-ratelimit-limit": true,
+      "x-ratelimit-remaining": true,
+      "x-ratelimit-reset": true,
+      "retry-after": true,
+    },
     allowList: (req) => {
       const path = req.url.split("?")[0] ?? req.url;
-      return path === "/healthz" || path === "/readyz";
+      return (
+        path === "/healthz" ||
+        path === "/readyz" ||
+        path === "/openapi.yaml" ||
+        path === "/openapi.json"
+      );
+    },
+    errorResponseBuilder: (_req, context) => {
+      const afterSeconds = Math.max(1, Math.ceil(context.ttl / 1000));
+      return Object.assign(
+        new Error(`Rate limit exceeded. Retry after ${afterSeconds} seconds.`),
+        {
+          statusCode: context.statusCode,
+          code: "RATE_LIMITED",
+        },
+      );
     },
   });
 
   app.addHook("preHandler", meshAuthHook);
 
   await app.register(healthRoutes);
+  await registerOpenApiRoutes(app);
 
   app.get("/", async () => ({
     name: "AgentSphere Gateway",
     version: "0.1.0",
     mode: config.gatewayOpen ? "open" : "locked",
+    openapi: "/openapi.yaml",
   }));
 
   app.get("/mesh/health", async () => {
@@ -169,6 +203,7 @@ export async function startServer() {
   log.info("Gateway listening", {
     port: config.port,
     gatewayOpen: config.gatewayOpen,
+    openapi: "/openapi.yaml",
   });
   return app;
 }

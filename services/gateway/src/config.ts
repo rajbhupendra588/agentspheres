@@ -16,6 +16,10 @@ export const config = {
   jwtSecret: resolveJwtSecret(),
   rateLimitMax: Number(optional("AS_RATE_LIMIT_MAX", "200")),
   rateLimitWindowMs: Number(optional("AS_RATE_LIMIT_WINDOW_MS", "60000")),
+  /** Upstream proxy timeout for /mesh/* fan-out (ms). */
+  proxyTimeoutMs: Number(optional("AS_PROXY_TIMEOUT_MS", "60000")),
+  /** Optional absolute path override for OpenAPI YAML. */
+  openApiPath: optional("AS_OPENAPI_PATH", "") || undefined,
 } as const;
 
 export const downstreamServices = [

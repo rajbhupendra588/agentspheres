@@ -49,6 +49,9 @@ Console is served at **http://localhost:3000** in Docker Compose.
 
 Issue a JWT on **Security** (`POST /mesh/auth/v1/token`) to authenticate when the gateway is locked down.
 
+External applications should integrate against the Gateway **OpenAPI** contract:
+`GET http://localhost:8080/openapi.yaml` (source: `services/gateway/openapi/openapi.yaml`).
+
 ## Multi-tenancy
 
 The console scopes all mesh requests to a **tenant** (and optional **project**):

@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
+import { BrandLogo } from "@/components/brand-logo";
 import { PageContainer } from "@/layouts/page-container";
 import { PageHeader } from "@/components/page-header";
 import { MetricTile } from "@/components/metric-tile";
@@ -18,6 +19,7 @@ export function AboutPage() {
         <PageHeader
           title="About AgentSphere"
           description="Enterprise AI Agent Service Mesh — control plane and data plane for agent identity, discovery, governed invoke, tools, memory, and workflows."
+          actions={<BrandLogo variant="full" className="max-w-[180px]" />}
         />
 
         <div className="mb-8 grid gap-4 sm:grid-cols-3">

@@ -26,6 +26,10 @@ Local compose keeps `AS_GATEWAY_OPEN=true` for E2E. Production overlay sets it t
 | Gateway | http://localhost:8080 |
 | Console | http://localhost:3000 |
 | Mesh health | http://localhost:8080/mesh/health |
+| OpenAPI (YAML) | http://localhost:8080/openapi.yaml |
+| OpenAPI discovery | http://localhost:8080/openapi.json |
+
+Client integrators should use the **Gateway OpenAPI** contract (`services/gateway/openapi/openapi.yaml`, also mirrored at `docs/openapi/agentsphere-gateway.openapi.yaml`). It documents auth, tenant isolation, error codes, rate limits, retries, and availability probes.
 
 Smoke + demo:
 
