@@ -25,7 +25,7 @@
     "@agentsphere/common": "workspace:*",
     "@agentsphere/contracts": "workspace:*",
     "@fastify/rate-limit": "^10.3.0",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.5",
     "jsonwebtoken": "^9.0.2",
     "rate-limiter-flexible": "^11.2.0",
     "zod": "^3.24.1"
